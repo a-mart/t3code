@@ -62,12 +62,16 @@ echo
 echo "Typechecking..."
 with_node vp run typecheck
 
+# Upstream CI runs on x64 Linux. These upstream tests fail on an arm64 Mac with
+# or without the fork, so they are skipped here (|-separated test names).
+host_dependent_tests='cross-architecture Windows payloads'
+
 tests="$(git diff --name-only --diff-filter=d "$target" HEAD -- '*.test.ts' '*.test.tsx' | grep -v '\.browser\.test\.' || true)"
 if [ -n "$tests" ]; then
   echo
   echo "Running tests the fork changed..."
   # shellcheck disable=SC2086 # one path per word
-  with_node vp test run $tests
+  with_node vp test run $tests -t "^(?!.*($host_dependent_tests)).*"
 fi
 
 cat <<EOF
