@@ -20,3 +20,10 @@ with_node() {
   [ -n "$version" ] || die "could not read engines.node from package.json"
   vp env exec --node "$version" "$@"
 }
+
+# Upstream CI builds the native helpers with the newest stable Rust, and their
+# crates keep raising the minimum version, so builds refresh and use stable.
+use_current_stable_rust() {
+  rustup update stable --no-self-update
+  export RUSTUP_TOOLCHAIN=stable
+}

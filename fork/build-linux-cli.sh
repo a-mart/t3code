@@ -24,6 +24,7 @@ command -v vp >/dev/null || curl -fsSL https://vite.plus | bash
 command -v cargo >/dev/null ||
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
 command -v vp >/dev/null || die "vp is not on PATH after installing it"
+use_current_stable_rust
 
 # The same public T3 Connect configuration official builds embed (.env is gitignored).
 cp .env.example .env

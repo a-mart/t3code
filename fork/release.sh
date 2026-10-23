@@ -58,6 +58,7 @@ build_dir="${T3_FORK_BUILD_DIR:-$(dirname "$root")/t3code-fork-build}"
 out="$FORK_CACHE_DIR/releases/$version"
 logs="$FORK_CACHE_DIR/logs/$version"
 mkdir -p "$out" "$logs"
+git worktree prune
 [ -d "$build_dir" ] || git worktree add --quiet --detach "$build_dir" "$sha"
 git -C "$build_dir" checkout --quiet --force --detach "$sha"
 # The same public T3 Connect configuration official builds embed (.env is gitignored).
@@ -84,6 +85,7 @@ set +e
   set -e
   cd "$build_dir"
   export T3CODE_DESKTOP_UPDATE_REPOSITORY="$FORK_REPO"
+  use_current_stable_rust
   rm -rf release
   with_node vp i
   with_node node scripts/update-release-package-versions.ts "$version"

@@ -94,8 +94,9 @@ fork/release.sh --dry-run   # build only
 
 It builds the signed macOS app in the sibling worktree `../t3code-fork-build` while dev1 builds the
 Linux server archive, then publishes both. Set `T3_FORK_LINUX_BUILDER` to build on another Linux host.
-The first build on a builder installs `vp` and Rust for that user. Artifacts and logs are under
-`~/.cache/t3code-fork`.
+The first build on a builder installs `vp` and Rust for that user, and every build updates the
+builder's `stable` Rust toolchain, since upstream builds with the newest one. Artifacts and logs are
+under `~/.cache/t3code-fork`.
 
 The Linux archive's resource monitor links against the builder's glibc, and dev1 runs Ubuntu 26.04. A
 host on an older distribution may need an archive built on a machine running that release.
@@ -125,6 +126,8 @@ the host. From then on, **Update everything** in the desktop app moves the host 
 version.
 
 ### New host
+
+Linux only for now, since fork releases carry no macOS server archive:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/a-mart/t3code/main/scripts/install.sh | T3CODE_CHANNEL=nightly sh
