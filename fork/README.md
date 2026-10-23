@@ -28,8 +28,10 @@ the upstream lines listed under [Fork changes](#fork-changes).
 Upstream merges about 250 commits a day, and every upstream line the fork changes can conflict on a
 later sync. So:
 
-1. **Upstream first.** If a change would help every T3 Code user, propose it upstream. The fork carries
-   only what upstream won't take, and drops a fork change once upstream ships an equivalent.
+1. **Configure, then upstream, then fork.** Settings, themes, keybindings, provider instances, ACP
+   agents, and project scripts need no fork code. If a code change would help every T3 Code user,
+   propose it upstream. The fork carries only what upstream won't take, and drops a fork change once
+   upstream ships an equivalent.
 2. **Add, don't edit.** Put fork code in new files and connect it to upstream code with as few changed
    lines as possible. Never reformat, rename, or reorganize upstream code. Mark changed upstream lines
    with a `fork:` comment where the file allows one; `git grep -n "fork:"` lists them.
