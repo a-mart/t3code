@@ -1,5 +1,7 @@
 # T3 Code
 
+> **This checkout is Adam's fork (`a-mart/t3code`), not upstream.** Read [fork/README.md](fork/README.md) before changing code. Its rules for keeping upstream merges painless override the guidance below where they conflict, and it explains syncing, releasing, and deploying the fork.
+
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
