@@ -11,10 +11,10 @@ the upstream lines listed under [Fork changes](#fork-changes).
   builds always point at history that still exists.
 - **Remotes.** `origin` is `a-mart/t3code`. `upstream` is `pingdotgg/t3code`, with pushing disabled and
   tags fetched only when a script needs one.
-- **Releases** are GitHub prereleases on `a-mart/t3code` holding the macOS app with its updater
-  manifest, the Linux server archive, and `SHA256SUMS`. Every T3 Code updater reads GitHub Releases, so
-  once a build points at the fork, the desktop update button, **Update everything**, `t3 update`, and
-  server self-updates all deliver fork builds.
+- **Releases** are GitHub prereleases on `a-mart/t3code` holding the macOS app and the Windows x64
+  installer with their updater manifests, the Linux and Windows server archives, and `SHA256SUMS`.
+  Every T3 Code updater reads GitHub Releases, so once a build points at the fork, the desktop update
+  button, **Update everything**, `t3 update`, and server self-updates all deliver fork builds.
 - **Versions** use upstream's nightly format, `X.Y.Z-nightly.YYYYMMDD.N`, with fork build numbers `N`
   from 100001 up. `X.Y.Z` is the patch after upstream's last stable release and the date is the build
   day in UTC. Every channel check treats a fork build like an upstream nightly, and it sorts after any
@@ -44,12 +44,12 @@ later sync. So:
 
 ## Fork changes
 
-| Commit                                                              | Upstream files touched                                                                                | Why                                                                                                                                                                          |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fork(release)`: fetch releases and updates from a-mart/t3code      | `packages/shared/src/cliRelease.ts`, `scripts/install.sh`, and the two tests that assert release URLs | Hosts download fork builds. When an upstream client asks a fork server to update, the download fails and the server keeps running the fork instead of turning into upstream. |
-| `fork(desktop)`: sign the macOS app as com.adammartin.t3code        | `scripts/build-desktop-artifact.ts` and its test                                                      | Signed builds need a provisioning profile for the bundle ID, and only the ID owner's Apple team can create one. Data locations don't depend on the bundle ID.                |
-| `fork(docs)`: point agents at the fork guide                        | `AGENTS.md`, `CLAUDE.md`                                                                              | Agents read these rules before changing code; Claude Code loads this guide every session.                                                                                    |
-| `fork(secrets)`: Bitwarden secrets for agents through `secure_bash` | The [extension seams](#extension-seams) below                                                         | Agents use passwords, tokens, and SSH keys from Bitwarden without seeing them. Upstream has no secret store for agents. See [secrets.md](secrets.md).                        |
+| Commit                                                              | Upstream files touched                                                                                                       | Why                                                                                                                                                                          |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fork(release)`: fetch releases and updates from a-mart/t3code      | `packages/shared/src/cliRelease.ts`, `scripts/install.sh`, `scripts/install.ps1`, and the two tests that assert release URLs | Hosts download fork builds. When an upstream client asks a fork server to update, the download fails and the server keeps running the fork instead of turning into upstream. |
+| `fork(desktop)`: sign the macOS app as com.adammartin.t3code        | `scripts/build-desktop-artifact.ts` and its test                                                                             | Signed builds need a provisioning profile for the bundle ID, and only the ID owner's Apple team can create one. Data locations don't depend on the bundle ID.                |
+| `fork(docs)`: point agents at the fork guide                        | `AGENTS.md`, `CLAUDE.md`                                                                                                     | Agents read these rules before changing code; Claude Code loads this guide every session.                                                                                    |
+| `fork(secrets)`: Bitwarden secrets for agents through `secure_bash` | The [extension seams](#extension-seams) below                                                                                | Agents use passwords, tokens, and SSH keys from Bitwarden without seeing them. Upstream has no secret store for agents. See [secrets.md](secrets.md).                        |
 
 ## Extension seams
 
@@ -117,10 +117,15 @@ fork/release.sh --dry-run   # build only
 ```
 
 It builds the signed macOS app in the sibling worktree `../t3code-fork-build` while dev1 builds the
-Linux server archive, then publishes both. Set `T3_FORK_LINUX_BUILDER` to build on another Linux host.
-The first build on a builder installs `vp` and Rust for that user, and every build updates the
-builder's `stable` Rust toolchain, since upstream builds with the newest one. Artifacts and logs are
-under `~/.cache/t3code-fork`.
+Linux server archive and then the Windows x64 release, which embeds that archive as its WSL runtime.
+Then it publishes them all. Set `T3_FORK_LINUX_BUILDER` to build on another x64 Linux host. The builder
+needs `sudo apt-get install -y zip pkg-config libsecret-1-dev` once. The first build on a builder
+installs `vp`, Rust, and `cargo-xwin` for that user, and every build updates the builder's `stable`
+Rust toolchain, since upstream builds with the newest one. Artifacts and logs are under
+`~/.cache/t3code-fork`.
+
+The Windows build is unsigned, and nothing in the release runs it on Windows before publishing. Upstream
+checks its builds on a Windows runner with `scripts/verify-windows-desktop-artifact.ts`.
 
 The Linux archive's resource monitor links against the builder's glibc, and dev1 runs Ubuntu 26.04. A
 host on an older distribution may need an archive built on a machine running that release.
@@ -149,14 +154,28 @@ release, and reinstalls the service so its launcher is the fork's build too. Thi
 the host. From then on, **Update everything** in the desktop app moves the host to the desktop's
 version.
 
+### A Windows PC
+
+Run `T3-Code-<version>-x64.exe` from the release. It is unsigned, so SmartScreen warns first: choose
+**More info**, then **Run anyway**. After that, the update button installs new fork releases. The fork
+installs under its own app ID, so an upstream T3 Code install stays beside it until you uninstall it
+from **Settings → Apps**. Both read the same `~\.t3` home.
+
 ### New host
 
-Linux only for now, since fork releases carry no macOS server archive:
+Linux or Windows, since fork releases carry no macOS server archive:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/a-mart/t3code/main/scripts/install.sh | T3CODE_CHANNEL=nightly sh
 t3 service install
 t3 connect   # or pair over Tailscale: t3 pair --tailscale
+```
+
+On Windows, install the CLI from PowerShell. T3 Code has no background service on Windows, so the
+desktop app is usually the simpler host there.
+
+```powershell
+$env:T3CODE_CHANNEL="nightly"; irm https://raw.githubusercontent.com/a-mart/t3code/main/scripts/install.ps1 | iex
 ```
 
 ### Phone

@@ -8,8 +8,9 @@
 #   fork/release.sh --unsigned  # allow an unsigned macOS app (testing only)
 #
 # Builds the macOS app in a sibling worktree on this Mac while the Linux builder
-# ($T3_FORK_LINUX_BUILDER, default dev1) builds the server archive. Signing
-# settings live outside the repo; see fork/README.md.
+# ($T3_FORK_LINUX_BUILDER, default dev1) builds the Linux server archive and then
+# the unsigned Windows x64 release. Signing settings live outside the repo; see
+# fork/README.md.
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -65,7 +66,7 @@ git -C "$build_dir" checkout --quiet --force --detach "$sha"
 cp .env.example "$build_dir/.env"
 
 echo "Releasing $version from $(git rev-parse --short "$sha") ($sign_label)."
-echo "Building the Linux server archive on $LINUX_BUILDER (log: $logs/linux.log)..."
+echo "Building the Linux and Windows releases on $LINUX_BUILDER (log: $logs/linux.log)..."
 ssh -o BatchMode=yes "$LINUX_BUILDER" bash -s -- "$FORK_REPO" "$sha" "$version" >"$logs/linux.log" 2>&1 <<'REMOTE' &
 set -euo pipefail
 repo="$1" sha="$2" version="$3"
@@ -75,6 +76,7 @@ cd "$dir"
 git fetch --quiet origin
 git checkout --quiet --force --detach "$sha"
 bash fork/build-linux-cli.sh "$version"
+bash fork/build-windows.sh "$version" "release-cli/t3-$version-linux-x64.tar.gz"
 REMOTE
 linux_pid=$!
 
@@ -99,14 +101,16 @@ linux_status=$?
 set -e
 git -C "$build_dir" checkout --quiet --force "$sha" # drop the version alignment
 [ "$mac_status" -eq 0 ] || die "the macOS build failed; see $logs/mac.log"
-[ "$linux_status" -eq 0 ] || die "the Linux build failed; see $logs/linux.log"
+[ "$linux_status" -eq 0 ] || die "the Linux or Windows build failed; see $logs/linux.log"
 
 cp "$build_dir"/release/*.dmg "$build_dir"/release/*.zip "$build_dir"/release/*.blockmap "$out/"
 for manifest in "$build_dir"/release/*.yml; do
   [ "$(basename "$manifest")" = builder-debug.yml ] || cp "$manifest" "$out/"
 done
-scp -q -o BatchMode=yes "$LINUX_BUILDER:t3code-fork-build/release-cli/t3-$version-linux-*.tar.gz" "$out/"
-(cd "$out" && shasum -a 256 t3-*.tar.gz >SHA256SUMS)
+remote="$LINUX_BUILDER:t3code-fork-build"
+scp -q -o BatchMode=yes "$remote/release-cli/t3-$version-*" "$remote/release/*.exe" \
+  "$remote/release/*.exe.blockmap" "$remote/release/nightly.yml" "$out/"
+(cd "$out" && shasum -a 256 t3-*.tar.gz t3-*.zip >SHA256SUMS)
 
 base="$(git tag --merged "$sha" --list 'v*-nightly.*' | grep -Ev '\.[0-9]{6,}$' | sort -V | tail -n 1 || true)"
 [ -n "$base" ] || die "no upstream nightly tag is merged into main; run fork/sync-upstream.sh"
