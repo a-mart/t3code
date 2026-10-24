@@ -42,5 +42,6 @@ export T3CODE_RELEASE_BASE_URL="$base_url"
 "$t3" update "$version" --yes
 fork_t3="$home/runtime/versions/$version/t3"
 "$fork_t3" service install
+if [ -L "$HOME/.local/bin/t3" ]; then ln -sfn "$fork_t3" "$HOME/.local/bin/t3"; fi
 "$fork_t3" service status
 REMOTE
