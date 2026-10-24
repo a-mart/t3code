@@ -48,7 +48,7 @@ later sync. So:
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fork(release)`: fetch releases and updates from a-mart/t3code | `packages/shared/src/cliRelease.ts`, `scripts/install.sh`, and the two tests that assert release URLs | Hosts download fork builds. When an upstream client asks a fork server to update, the download fails and the server keeps running the fork instead of turning into upstream. |
 | `fork(desktop)`: sign the macOS app as com.adammartin.t3code   | `scripts/build-desktop-artifact.ts` and its test                                                      | Signed builds need a provisioning profile for the bundle ID, and only the ID owner's Apple team can create one. Data locations don't depend on the bundle ID.                |
-| `fork(docs)`: point agents at the fork guide                   | `AGENTS.md`                                                                                           | Agents read these rules before changing code.                                                                                                                                |
+| `fork(docs)`: point agents at the fork guide                   | `AGENTS.md`, `CLAUDE.md`                                                                              | Agents read these rules before changing code; Claude Code loads this guide every session.                                                                                    |
 
 ## Sync with upstream
 
