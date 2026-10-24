@@ -21,9 +21,15 @@ echo "Moving $host to T3 Code $version from $FORK_REPO..."
 ssh -o BatchMode=yes "$host" bash -s -- "$version" "$FORK_RELEASES_URL" <<'REMOTE'
 set -euo pipefail
 version="$1" base_url="$2"
-t3="$(command -v t3 || echo "$HOME/.local/bin/t3")"
+home="${T3CODE_HOME:-$HOME/.t3}"
+# Remote updates move the service without repointing the `t3` link on PATH, so
+# prefer the CLI of the version the service actually runs.
+active="$(sed -n 's/.*"activeVersion": *"\([^"]*\)".*/\1/p' "$home/runtime/service-state.json" 2>/dev/null | head -n 1)"
+t3="$home/runtime/versions/$active/t3"
+[ -n "$active" ] && [ -x "$t3" ] || t3="$(command -v t3 || echo "$HOME/.local/bin/t3")"
 [ -x "$t3" ] || { echo "t3 is not installed on $(hostname); see 'New host' in fork/README.md." >&2; exit 1; }
-env_file="${T3CODE_HOME:-$HOME/.t3}/service.env"
+echo "Using $t3"
+env_file="$home/service.env"
 touch "$env_file"
 chmod 600 "$env_file"
 if grep -q '^T3CODE_RELEASE_BASE_URL=' "$env_file"; then
@@ -34,6 +40,7 @@ else
 fi
 export T3CODE_RELEASE_BASE_URL="$base_url"
 "$t3" update "$version" --yes
-"$t3" service install
-"$t3" service status
+fork_t3="$home/runtime/versions/$version/t3"
+"$fork_t3" service install
+"$fork_t3" service status
 REMOTE
