@@ -12,6 +12,13 @@ import {
   type ResolvedSettingsScope,
   type SettingsScopeSearch,
 } from "./settingsScope";
+// fork:
+import {
+  FORK_SETTINGS_CATEGORY_SCOPES,
+  FORK_SETTINGS_SEARCH_ITEMS,
+  FORK_SETTINGS_SECTION_LABELS,
+  type ForkSettingsPath,
+} from "../../fork/settings";
 
 export type SettingsPath =
   | "/settings/projects"
@@ -26,7 +33,8 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | ForkSettingsPath; // fork:
 
 export type SettingsSearchScope =
   | "environment"
@@ -85,6 +93,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+  ...FORK_SETTINGS_SECTION_LABELS, // fork:
 };
 
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
@@ -1007,6 +1016,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
   },
+  ...FORK_SETTINGS_SEARCH_ITEMS, // fork:
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
@@ -1027,6 +1037,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
+  ...FORK_SETTINGS_CATEGORY_SCOPES, // fork:
 };
 
 export function getSettingsSearchTargetScope(targetId: string) {

@@ -1,4 +1,6 @@
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
+import { isForkT3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation"; // fork:
+import { forkT3ToolSummaryLabel } from "./fork/t3ToolSummary.ts"; // fork:
 
 export interface T3ToolSummaryCall {
   readonly input: unknown;
@@ -94,6 +96,13 @@ export function summarizeT3ToolCalls(
   const completed = results.filter((call) => call.outcome === "completed");
   let failedCount = results.filter((call) => call.outcome === "failed").length;
   const selected = completed.length > 0 ? completed : results;
+  // fork:
+  if (isForkT3McpToolSummaryAction(action)) {
+    return {
+      label: forkT3ToolSummaryLabel(action, completed.length, selected.length),
+      failedCount,
+    };
+  }
   const times = quantity(selected.length, "time");
   const phrase = (past: string, infinitive: string, object: string) =>
     `${completed.length > 0 ? past : `Tried to ${infinitive}`} ${object}`;

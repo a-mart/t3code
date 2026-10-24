@@ -44,11 +44,33 @@ later sync. So:
 
 ## Fork changes
 
-| Commit                                                         | Upstream files touched                                                                                | Why                                                                                                                                                                          |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fork(release)`: fetch releases and updates from a-mart/t3code | `packages/shared/src/cliRelease.ts`, `scripts/install.sh`, and the two tests that assert release URLs | Hosts download fork builds. When an upstream client asks a fork server to update, the download fails and the server keeps running the fork instead of turning into upstream. |
-| `fork(desktop)`: sign the macOS app as com.adammartin.t3code   | `scripts/build-desktop-artifact.ts` and its test                                                      | Signed builds need a provisioning profile for the bundle ID, and only the ID owner's Apple team can create one. Data locations don't depend on the bundle ID.                |
-| `fork(docs)`: point agents at the fork guide                   | `AGENTS.md`, `CLAUDE.md`                                                                              | Agents read these rules before changing code; Claude Code loads this guide every session.                                                                                    |
+| Commit                                                              | Upstream files touched                                                                                | Why                                                                                                                                                                          |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fork(release)`: fetch releases and updates from a-mart/t3code      | `packages/shared/src/cliRelease.ts`, `scripts/install.sh`, and the two tests that assert release URLs | Hosts download fork builds. When an upstream client asks a fork server to update, the download fails and the server keeps running the fork instead of turning into upstream. |
+| `fork(desktop)`: sign the macOS app as com.adammartin.t3code        | `scripts/build-desktop-artifact.ts` and its test                                                      | Signed builds need a provisioning profile for the bundle ID, and only the ID owner's Apple team can create one. Data locations don't depend on the bundle ID.                |
+| `fork(docs)`: point agents at the fork guide                        | `AGENTS.md`, `CLAUDE.md`                                                                              | Agents read these rules before changing code; Claude Code loads this guide every session.                                                                                    |
+| `fork(secrets)`: Bitwarden secrets for agents through `secure_bash` | The [extension seams](#extension-seams) below                                                         | Agents use passwords, tokens, and SSH keys from Bitwarden without seeing them. Upstream has no secret store for agents. See [secrets.md](secrets.md).                        |
+
+## Extension seams
+
+The `fork(secrets)` lines connect upstream registries to fork files, so the next fork feature edits
+fork files only:
+
+| To add             | Write it in                                                                                                                                                                        | Upstream reads it in                                                                                                                                                       |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A WebSocket RPC    | `packages/contracts/src/fork/rpc.ts` for the method and its scope, `apps/server/src/fork/ws.ts` for the handler, `apps/server/src/fork/rpcAggregates.ts` for tracing               | `packages/contracts/src/rpc.ts`, `clientRpcPermissions.ts`, and `index.ts`; `apps/server/src/ws.ts`, `auth/RpcAuthorization.ts`, and `observability/RpcInstrumentation.ts` |
+| A server service   | `apps/server/src/fork/layer.ts`                                                                                                                                                    | `apps/server/src/server.ts`                                                                                                                                                |
+| An agent tool      | A toolkit registered in `apps/server/src/fork/mcp.ts`, with its timeline label in `packages/shared/src/fork/t3McpTools.ts` and `packages/client-runtime/src/fork/t3ToolSummary.ts` | `apps/server/src/mcp/McpHttpServer.ts`, `packages/shared/src/t3McpToolPresentation.ts`, `packages/client-runtime/src/t3ToolSummary.ts`                                     |
+| Agent instructions | `packages/provider-core/src/server/fork/orchestrationInstructions.ts`                                                                                                              | `packages/provider-core/src/server/orchestrationInstructions.ts`                                                                                                           |
+| A settings page    | `apps/web/src/fork/settings.ts` and a route at `apps/web/src/routes/settings.<page>.tsx`; the dev server regenerates `routeTree.gen.ts`                                            | `apps/web/src/components/settings/settingsSearch.ts` and `SettingsSidebarNav.tsx`, `apps/web/src/routes/settings.tsx`                                                      |
+
+- Fork services are provided with the server's runtime services, not on the routes: each WebSocket
+  connection builds its handlers from the request context, which sees only runtime services.
+- `apps/server/src/fork/ws.ts` looks its services up with `Effect.serviceOption`, so upstream tests
+  that build the WebSocket layer need no fork services.
+- Fork RPC methods carry a `fork` prefix, such as `forkSecrets.getState`, so they can't collide with
+  upstream names. Clients that don't know them never call them.
+- Fork state lives in files under `~/.t3/userdata/fork/` and in server secrets named `fork-…`.
 
 ## Sync with upstream
 

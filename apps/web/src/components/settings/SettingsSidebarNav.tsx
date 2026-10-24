@@ -48,6 +48,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { FORK_SETTINGS_SECTION_ICONS } from "../../fork/settings"; // fork:
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -88,6 +89,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
   "/settings/archived": ArchiveIcon,
+  ...FORK_SETTINGS_SECTION_ICONS, // fork:
 };
 
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{

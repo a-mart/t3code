@@ -26,6 +26,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForkWsRpcGroup } from "./fork/rpc.ts"; // fork:
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -2078,4 +2079,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
-).middleware(RpcScopeAuthorization);
+)
+  // fork: merged before the middleware so fork methods get the same scope checks.
+  .merge(ForkWsRpcGroup)
+  .middleware(RpcScopeAuthorization);
