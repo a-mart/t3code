@@ -50,6 +50,7 @@ later sync. So:
 | `fork(desktop)`: sign the macOS app as com.adammartin.t3code        | `scripts/build-desktop-artifact.ts` and its test                                                                             | Signed builds need a provisioning profile for the bundle ID, and only the ID owner's Apple team can create one. Data locations don't depend on the bundle ID.                |
 | `fork(docs)`: point agents at the fork guide                        | `AGENTS.md`, `CLAUDE.md`                                                                                                     | Agents read these rules before changing code; Claude Code loads this guide every session.                                                                                    |
 | `fork(secrets)`: Bitwarden secrets for agents through `secure_bash` | The [extension seams](#extension-seams) below                                                                                | Agents use passwords, tokens, and SSH keys from Bitwarden without seeing them. Upstream has no secret store for agents. See [secrets.md](secrets.md).                        |
+| `fork(agents)`: wait with Monitor, not a background shell command   | None (agent instructions seam)                                                                                               | A background shell command doesn't mark the thread Waiting, so a thread waiting on a backup or deploy looks finished. Monitor and subagents do mark it.                      |
 
 ## Extension seams
 
