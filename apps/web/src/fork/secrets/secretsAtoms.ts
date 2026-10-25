@@ -6,7 +6,7 @@ import {
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 
-// One request per environment at a time: a second click can't start a second sign-in.
+// One request per environment at a time: a second click can't start a second unlock.
 const perEnvironment = {
   mode: "singleFlight" as const,
   key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
@@ -20,11 +20,6 @@ export const forkSecrets = {
   configure: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "fork:secrets:configure",
     tag: FORK_WS_METHODS.secretsConfigure,
-    concurrency: perEnvironment,
-  }),
-  connect: createEnvironmentRpcCommand(connectionAtomRuntime, {
-    label: "fork:secrets:connect",
-    tag: FORK_WS_METHODS.secretsConnect,
     concurrency: perEnvironment,
   }),
   unlock: createEnvironmentRpcCommand(connectionAtomRuntime, {

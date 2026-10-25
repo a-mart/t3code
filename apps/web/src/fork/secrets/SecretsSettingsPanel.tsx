@@ -17,7 +17,6 @@ import {
   CheckIcon,
   CopyIcon,
   DownloadIcon,
-  ExternalLinkIcon,
   KeyRoundIcon,
   LockIcon,
   LockOpenIcon,
@@ -40,7 +39,7 @@ import { searchableSetting } from "../../components/settings/settingsSearch";
 import { useSettingsScope } from "../../components/settings/SettingsScopeContext";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
-import { Button, InlineButton } from "../../components/ui/button";
+import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import {
   Empty,
@@ -92,7 +91,6 @@ import {
   type UnlockTransportProblem,
 } from "./secretsSettings.logic";
 
-const API_KEY_HELP_URL = "https://bitwarden.com/help/personal-api-key/";
 const ITEM_FILTER_THRESHOLD = 8;
 
 type Outcome = { readonly ok: true } | { readonly ok: false; readonly message: string | null };
@@ -122,10 +120,6 @@ export function SecretsSettingsPanel({ environmentId }: { readonly environmentId
   const commands = {
     configure: useAtomCommand(forkSecrets.configure, {
       label: "secrets settings",
-      reportFailure: false,
-    }),
-    connect: useAtomCommand(forkSecrets.connect, {
-      label: "connect Bitwarden",
       reportFailure: false,
     }),
     unlock: useAtomCommand(forkSecrets.unlock, { label: "unlock Bitwarden", reportFailure: false }),
@@ -172,7 +166,7 @@ export function SecretsSettingsPanel({ environmentId }: { readonly environmentId
       setSnapshot({ state: result.value, at: Date.now() });
       return { ok: true };
     }
-    // A failed command can still change state: an API key that worked with a wrong password signs in.
+    // A failed command can still change state, as when an unlock finds the account signed out.
     if (!isAtomCommandInterrupted(result)) query.refresh();
     return { ok: false, message: failureMessage(result) };
   };
@@ -227,7 +221,6 @@ export function SecretsSettingsPanel({ environmentId }: { readonly environmentId
         busy={busy}
         onRefresh={query.refresh}
         onConfigure={(input) => run("configure", () => commands.configure({ ...env, input }))}
-        onConnect={(input) => run("connect", () => commands.connect({ ...env, input }))}
         onUnlock={(password) =>
           run("unlock", () => commands.unlock({ ...env, input: { password } }))
         }
@@ -358,12 +351,6 @@ interface BitwardenSectionProps {
   readonly busy: string | null;
   readonly onRefresh: () => void;
   readonly onConfigure: (input: ForkSecretsConfigureInput) => Promise<Outcome>;
-  readonly onConnect: (input: {
-    readonly clientId: string;
-    readonly clientSecret: string;
-    readonly password: string;
-    readonly serverUrl: string | null;
-  }) => Promise<Outcome>;
   readonly onUnlock: (password: string) => Promise<Outcome>;
   readonly onLock: () => Promise<Outcome>;
   readonly onLogout: () => Promise<Outcome>;
@@ -374,8 +361,6 @@ interface BitwardenSectionProps {
 function BitwardenSection(props: BitwardenSectionProps) {
   const { state } = props;
   const nowMinute = useNowMinute();
-  // Shared, so a sign-in that leaves the vault locked keeps its message on the unlock form.
-  const [authError, setAuthError] = useState<string | null>(null);
   const connected = state.status === "ready" || state.status === "locked";
   const account = state.account;
   const description =
@@ -440,12 +425,8 @@ function BitwardenSection(props: BitwardenSectionProps) {
           {state.status === "cli_missing" || state.status === "cli_unusable" ? (
             <CliSetup {...props} />
           ) : null}
-          {state.status === "unauthenticated" ? (
-            <ConnectForm {...props} error={authError} onError={setAuthError} />
-          ) : null}
-          {state.status === "locked" ? (
-            <UnlockForm {...props} error={authError} onError={setAuthError} />
-          ) : null}
+          {state.status === "unauthenticated" ? <SignInForm {...props} /> : null}
+          {state.status === "locked" ? <UnlockForm {...props} /> : null}
         </div>
       </SettingsRow>
       {connected ? <KeepUnlockedRow {...props} /> : null}
@@ -491,8 +472,8 @@ function TransportNotice({
       <AlertTitle>Use a private connection for your master password</AlertTitle>
       <AlertDescription>
         {problem === "relay"
-          ? `You're reaching ${environmentLabel} through T3 Connect, where Cloudflare can read the traffic. Connect over Tailscale or from this machine to sign in or unlock.`
-          : `This connection to ${environmentLabel} isn't encrypted. Connect over Tailscale, HTTPS, or from this machine to sign in or unlock.`}
+          ? `You're reaching ${environmentLabel} through T3 Connect, where Cloudflare can read the traffic. Connect over Tailscale or from this machine to unlock.`
+          : `This connection to ${environmentLabel} isn't encrypted. Connect over Tailscale, HTTPS, or from this machine to unlock.`}
       </AlertDescription>
     </Alert>
   );
@@ -580,25 +561,14 @@ function selectedServerUrl(choice: BitwardenServerChoice, selfHostedUrl: string)
     : (BITWARDEN_SERVERS.find((entry) => entry.id === choice)?.url ?? null);
 }
 
-interface AuthFormProps extends BitwardenSectionProps {
-  readonly error: string | null;
-  readonly onError: (message: string | null) => void;
-}
-
-function ConnectForm(props: AuthFormProps) {
+function SignInForm(props: BitwardenSectionProps) {
   const [server, setServer] = useState<BitwardenServerChoice>(() =>
     bitwardenServerChoice(props.state.serverUrl),
   );
   const [selfHostedUrl, setSelfHostedUrl] = useState(
     server === "self-hosted" ? (props.state.serverUrl ?? "") : "",
   );
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [password, setPassword] = useState("");
-  const { error, onError: setError } = props;
-  const [showTerminal, setShowTerminal] = useState(false);
-  const blocked = props.transportProblem !== null;
-  const pending = props.busy === "connect";
+  const [error, setError] = useState<string | null>(null);
 
   const applyServer = async (choice: BitwardenServerChoice, url: string) => {
     const serverUrl = selectedServerUrl(choice, url);
@@ -607,156 +577,74 @@ function ConnectForm(props: AuthFormProps) {
     setError(outcome.ok ? null : outcome.message);
   };
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (blocked || props.busy !== null) return;
-    if (!clientId.trim() || !clientSecret.trim() || !password) {
-      setError("Enter the API key's client ID and secret, and the master password.");
-      return;
-    }
-    const serverUrl = selectedServerUrl(server, selfHostedUrl);
-    if (serverUrl === "") {
-      setError("Enter your server's URL.");
-      return;
-    }
-    const outcome = await props.onConnect({ clientId, clientSecret, password, serverUrl });
-    // Never keep the master password around after an attempt.
-    setPassword("");
-    if (outcome.ok) {
-      setClientId("");
-      setClientSecret("");
-      setError(null);
-    } else {
-      setError(outcome.message);
-    }
-  };
-
   return (
-    <form className="grid gap-3" onSubmit={(event) => void submit(event)}>
-      <fieldset disabled={blocked || pending} className="grid min-w-0 gap-3">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-1.5">
-            <Label htmlFor="secrets-server">Server</Label>
-            <Select
-              value={server}
-              onValueChange={(value) => {
-                const choice = BITWARDEN_SERVERS.find((entry) => entry.id === value)?.id;
-                if (choice === undefined) return;
-                setServer(choice);
-                if (choice !== "self-hosted") void applyServer(choice, "");
-              }}
-            >
-              <SelectTrigger id="secrets-server" size="sm">
-                <SelectValue>
-                  {BITWARDEN_SERVERS.find((entry) => entry.id === server)?.label}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                {BITWARDEN_SERVERS.map((entry) => (
-                  <SelectItem key={entry.id} value={entry.id}>
-                    {entry.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          </div>
-          {server === "self-hosted" ? (
-            <div className="grid gap-1.5">
-              <Label htmlFor="secrets-server-url">Server URL</Label>
-              <Input
-                id="secrets-server-url"
-                size="sm"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="https://vault.example.com"
-                value={selfHostedUrl}
-                onChange={(event) => setSelfHostedUrl(event.target.value)}
-                onBlur={() => void applyServer("self-hosted", selfHostedUrl)}
-              />
-            </div>
-          ) : null}
+    <div className="grid gap-3">
+      <fieldset disabled={props.busy !== null} className="grid min-w-0 gap-3 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <Label htmlFor="secrets-server">Server</Label>
+          <Select
+            value={server}
+            onValueChange={(value) => {
+              const choice = BITWARDEN_SERVERS.find((entry) => entry.id === value)?.id;
+              if (choice === undefined) return;
+              setServer(choice);
+              if (choice !== "self-hosted") void applyServer(choice, "");
+            }}
+          >
+            <SelectTrigger id="secrets-server" size="sm">
+              <SelectValue>
+                {BITWARDEN_SERVERS.find((entry) => entry.id === server)?.label}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              {BITWARDEN_SERVERS.map((entry) => (
+                <SelectItem key={entry.id} value={entry.id}>
+                  {entry.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        {server === "self-hosted" ? (
           <div className="grid gap-1.5">
-            <Label htmlFor="secrets-client-id">API key client ID</Label>
+            <Label htmlFor="secrets-server-url">Server URL</Label>
             <Input
-              id="secrets-client-id"
+              id="secrets-server-url"
               size="sm"
               autoComplete="off"
               spellCheck={false}
-              placeholder="user.xxxxxxxx-xxxx-…"
-              value={clientId}
-              onChange={(event) => setClientId(event.target.value)}
+              placeholder="https://vault.example.com"
+              value={selfHostedUrl}
+              onChange={(event) => setSelfHostedUrl(event.target.value)}
+              onBlur={() => void applyServer("self-hosted", selfHostedUrl)}
             />
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="secrets-client-secret">API key client secret</Label>
-            <SecretInput
-              id="secrets-client-secret"
-              size="sm"
-              value={clientSecret}
-              placeholder="Client secret"
-              onChange={(event) => setClientSecret(event.target.value)}
-            />
-          </div>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="secrets-connect-password">Master password</Label>
-          <SecretInput
-            id="secrets-connect-password"
-            size="sm"
-            value={password}
-            placeholder="Unlocks the vault on this host; never stored"
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </div>
+        ) : null}
       </fieldset>
       <FormError message={error} />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-md text-xs text-muted-foreground">
-          Use a dedicated account that can see only what agents should reach. Its API key is in the
-          Bitwarden web vault under Settings → Security → Keys.{" "}
-          <InlineButton
-            render={<a href={API_KEY_HELP_URL} target="_blank" rel="noreferrer noopener" />}
-          >
-            Learn more
-            <ExternalLinkIcon aria-hidden className="size-3" />
-          </InlineButton>
-        </p>
-        <Button type="submit" size="sm" disabled={blocked || props.busy !== null}>
-          {props.busy === null ? null : <Spinner />} Connect
-        </Button>
-      </div>
       {props.state.loginCommand ? (
         <div className="grid gap-2">
-          <InlineButton onClick={() => setShowTerminal((open) => !open)}>
-            <TerminalIcon aria-hidden className="size-3" />
-            {showTerminal
-              ? "Hide terminal sign-in"
-              : "Sign in from a terminal instead (SSO accounts)"}
-          </InlineButton>
-          {showTerminal ? (
-            <div className="grid gap-2">
-              <p className="text-xs text-muted-foreground">
-                Run this on {props.environmentLabel}. It signs in with T3's own Bitwarden data
-                folder and locks again, so the session key it prints stops working. Then unlock
-                here.
-              </p>
-              <CopyableCommand command={props.state.loginCommand} />
-              <div>
-                <RetryButton onClick={props.onRefresh} />
-              </div>
-            </div>
-          ) : null}
+          <p className="max-w-md text-xs text-muted-foreground">
+            Run this once in a terminal on {props.environmentLabel} and sign in as the account
+            agents should use. It keeps T3's login separate from your own bw. Then check again and
+            unlock here.
+          </p>
+          <CopyableCommand command={props.state.loginCommand} />
+          <div>
+            <RetryButton onClick={props.onRefresh} />
+          </div>
         </div>
       ) : null}
-    </form>
+      <p className="max-w-md text-xs text-muted-foreground">
+        Use a dedicated account that can see only what agents should reach.
+      </p>
+    </div>
   );
 }
 
-function UnlockForm(props: AuthFormProps) {
+function UnlockForm(props: BitwardenSectionProps) {
   const [password, setPassword] = useState("");
-  const { error, onError: setError } = props;
+  const [error, setError] = useState<string | null>(null);
   const blocked = props.transportProblem !== null;
   const pending = props.busy === "unlock";
   const submit = async (event: FormEvent) => {

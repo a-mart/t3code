@@ -3,8 +3,9 @@
  * installs a pinned copy of it on request.
  *
  * T3 keeps its own `bw` login in `<stateDir>/bitwarden-cli`, separate from any
- * personal `bw` setup. Secrets reach `bw` only through environment variables
- * (`--passwordenv`, `BW_CLIENTID`/`BW_CLIENTSECRET`, `BW_SESSION`) or stdin,
+ * personal `bw` setup: every unlock replaces the login's one session, so two
+ * apps sharing a login would keep locking each other out. Secrets reach `bw`
+ * only through environment variables (`--passwordenv`, `BW_SESSION`) or stdin,
  * never through arguments. `bw` stderr can echo item contents, so it is drained
  * and discarded, and failures carry only a fixed reason.
  */
@@ -147,13 +148,6 @@ export class BitwardenCli extends Context.Service<
     readonly configServer: (
       cli: BitwardenExecutable,
       serverUrl: string,
-    ) => Effect.Effect<void, ForkSecretsError>;
-    readonly loginApiKey: (
-      cli: BitwardenExecutable,
-      credentials: {
-        readonly clientId: Redacted.Redacted<string>;
-        readonly clientSecret: Redacted.Redacted<string>;
-      },
     ) => Effect.Effect<void, ForkSecretsError>;
     readonly unlock: (
       cli: BitwardenExecutable,
@@ -546,16 +540,6 @@ const make = Effect.gen(function* () {
     status,
     configServer: Effect.fn("BitwardenCli.configServer")(function* (cli, serverUrl) {
       yield* invoke(cli, ["config", "server", serverUrl], { onFailure: "cli_failed" });
-    }),
-    loginApiKey: Effect.fn("BitwardenCli.loginApiKey")(function* (cli, credentials) {
-      yield* invoke(cli, ["login", "--apikey"], {
-        onFailure: "login_failed",
-        timeout: NETWORK_TIMEOUT,
-        env: {
-          BW_CLIENTID: Redacted.value(credentials.clientId),
-          BW_CLIENTSECRET: Redacted.value(credentials.clientSecret),
-        },
-      });
     }),
     unlock,
     lock: Effect.fn("BitwardenCli.lock")(function* (cli, session) {

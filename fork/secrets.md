@@ -14,13 +14,14 @@ This is the Bitwarden Password Manager, not Bitwarden Secrets Manager.
    Bitwarden's GitHub releases onto the host, checks it against a SHA-256 pinned in T3, and keeps it
    in its data folder. Each T3 update can pin a newer `bw`; **Update** appears next to the CLI when
    one is available. A `bw` you installed yourself, with Homebrew or npm, works too. T3 keeps its own
-   `bw` login under `~/.t3/userdata/bitwarden-cli`, so it never touches yours.
+   `bw` login under `~/.t3/userdata/bitwarden-cli`, so it never touches yours, and unlocking one never
+   locks the other.
 2. Use a dedicated Bitwarden account that can see only what agents should reach, for example a member
-   of one organization collection. Its API key is in the Bitwarden web vault under
-   **Settings → Security → Keys**.
-3. In **Settings → Secrets**, choose the server and enter the API key's client ID and secret and the
-   master password. SSO accounts can't use an API key: run the terminal sign-in command shown under
-   the form on the host, then unlock in Settings.
+   of one organization collection.
+3. In **Settings → Secrets**, choose the server, then run the sign-in command shown there once in a
+   terminal on the host and sign in as that account. A terminal in any T3 project on the host works.
+   For an SSO account, add `--sso` after `login`. Select **Check again**, then unlock with the master
+   password.
 4. Under **Bitwarden collections**, choose the collections to sync and select **Save and sync**.
    Logins share their password, secure notes their text, and SSH keys their private key.
 5. Under **Secrets**, open each secret's project menu and grant it to projects, or to **All projects**.
@@ -82,10 +83,10 @@ key is then saved in T3's data folder, where any process running as your user ca
 
 ## Connections
 
-Signing in and unlocking work from the host itself, over Tailscale, or over HTTPS. They are refused
-over T3 Connect, where Cloudflare's edge decrypts the traffic, and over unencrypted LAN or internet
-connections. The App Store and Google Play apps can't show this page, but threads you drive from your
-phone can still use secrets.
+Unlocking works from the host itself, over Tailscale, or over HTTPS. It is refused over T3 Connect,
+where Cloudflare's edge decrypts the traffic, and over unencrypted LAN or internet connections. The
+App Store and Google Play apps can't show this page, but threads you drive from your phone can still
+use secrets.
 
 ## What this protects, and what it doesn't
 
@@ -105,7 +106,7 @@ Secrets need a macOS or Linux host.
 | CLI needed                                     | Select **Install Bitwarden CLI**, or install `bw` yourself and select **Check again**.              |
 | T3 couldn't install the Bitwarden CLI          | Check that the host can reach github.com, then try again.                                           |
 | This Bitwarden CLI can't keep a separate login | That `bw` stores its data in a `bw-data` folder beside it. Install it with Homebrew or npm instead. |
-| Bitwarden sign-in failed                       | Check the API key, the server choice, and that the host can reach Bitwarden.                        |
+| Still not signed in after running the command  | Run the exact command from Settings, on that host. A plain `bw login` signs in your own `bw`.       |
 | Bitwarden didn't unlock                        | Check the master password.                                                                          |
 | An agent reports a secret isn't granted        | Grant it to the thread's project in Settings → Secrets.                                             |
 | An agent can't save a secret                   | Choose **Where agents save new secrets**, and check the account can edit items in that collection.  |

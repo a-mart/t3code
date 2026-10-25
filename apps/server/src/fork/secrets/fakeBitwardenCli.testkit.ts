@@ -63,14 +63,14 @@ switch (args[0]) {
     write("fake-state.json", { ...state, serverUrl: args[2] });
     out("Saved setting config.");
     break;
-  case "login":
-    if (!args.includes("--apikey")) fail("Interactive login is not supported here.");
-    if (process.env.BW_CLIENTID !== vault.clientId || process.env.BW_CLIENTSECRET !== vault.clientSecret) {
-      fail("client_id or client_secret is incorrect.");
-    }
-    write("fake-state.json", { ...state, loggedIn: true, session: null });
-    out("You are logged in!");
+  case "login": {
+    // Stands in for a sign-in a person completes at bw's prompts, which ends unlocked.
+    if (state.loggedIn) fail("You are already logged in as " + vault.email + ".");
+    const session = crypto.randomBytes(32).toString("base64");
+    write("fake-state.json", { ...state, loggedIn: true, session });
+    out("You are logged in! export BW_SESSION=" + session);
     break;
+  }
   case "unlock": {
     if (!state.loggedIn) fail("You are not logged in.");
     const variable = args[args.indexOf("--passwordenv") + 1];
@@ -143,8 +143,6 @@ export interface FakeVaultItem {
 export interface FakeVault {
   readonly email: string;
   readonly password: string;
-  readonly clientId: string;
-  readonly clientSecret: string;
   readonly organizations: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly collections: ReadonlyArray<{
     readonly id: string;
@@ -174,8 +172,6 @@ export const DEPLOY_TOKEN = "ghp_9fKx2LmQ8vNw4RtY7uZaBcDeFgHiJkL0";
 export const defaultVault = (): FakeVault => ({
   email: "agent@example.com",
   password: "correct horse battery staple",
-  clientId: "user.0c7f1d2e-3a4b-5c6d-7e8f-9a0b1c2d3e4f",
-  clientSecret: "Zx8Cv7Bn6Mq5Wl4Ek3Rj2Th1",
   organizations: [{ id: ORGANIZATION_ID, name: "Acme" }],
   collections: [
     { id: INFRA_COLLECTION_ID, organizationId: ORGANIZATION_ID, name: "Infra" },

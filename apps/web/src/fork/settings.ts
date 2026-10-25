@@ -33,7 +33,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     title: "Bitwarden",
     to: "/settings/secrets",
     searchTerms: [
-      "bitwarden vault password manager sign in log in unlock lock master password api key cli bw",
+      "bitwarden vault password manager sign in log in unlock lock master password terminal cli bw",
     ],
   },
   {

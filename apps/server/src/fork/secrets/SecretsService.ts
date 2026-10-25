@@ -16,7 +16,6 @@ import {
   type ForkSecretKind,
   type ForkSecretsCollection,
   type ForkSecretsConfigureInput,
-  type ForkSecretsConnectInput,
   type ForkSecretsFailureReason,
   type ForkSecretsSetCollectionsInput,
   type ForkSecretsState,
@@ -268,9 +267,6 @@ export class SecretsService extends Context.Service<
     readonly configure: (
       input: ForkSecretsConfigureInput,
     ) => Effect.Effect<ForkSecretsState, ForkSecretsError>;
-    readonly connect: (
-      input: ForkSecretsConnectInput,
-    ) => Effect.Effect<ForkSecretsState, ForkSecretsError>;
     readonly unlock: (
       input: ForkSecretsUnlockInput,
     ) => Effect.Effect<ForkSecretsState, ForkSecretsError>;
@@ -365,10 +361,6 @@ const sameGrant = (left: ForkSecretGrant, right: ForkSecretGrant) =>
   left === "all" || right === "all"
     ? left === right
     : left.length === right.length && left.every((projectId, index) => right[index] === projectId);
-
-/** Null means Bitwarden.com, which a URL may also spell out. */
-const sameServer = (left: string | null, right: string | null) =>
-  (left ?? DEFAULT_SERVER_URL) === (right ?? DEFAULT_SERVER_URL);
 
 const normalizeServerUrl = (value: string | null | undefined) => {
   const trimmed = value?.trim() ?? "";
@@ -1405,55 +1397,6 @@ const make = Effect.gen(function* () {
   return SecretsService.of({
     getState,
     configure,
-    connect: Effect.fn("SecretsService.connect")(function* (input) {
-      const { epoch } = yield* SynchronizedRef.get(state);
-      return yield* exclusive(
-        Effect.gen(function* () {
-          const requested =
-            input.serverUrl === undefined ? undefined : yield* normalizeServerUrl(input.serverUrl);
-          const current = yield* stillWanted(epoch);
-          // Another request signed in meanwhile; a request for another server must not unlock or
-          // report that account as if it were the one asked for.
-          const otherServer =
-            requested !== undefined &&
-            !sameServer(requested, (current ?? (yield* SynchronizedRef.get(state))).file.serverUrl);
-          if (current === null) {
-            return otherServer ? yield* failure("already_authenticated") : yield* getState;
-          }
-          const executable = yield* requireCli;
-          const clientId = input.clientId.trim();
-          const clientSecret = input.clientSecret.trim();
-          if ((yield* accountStatus(executable, true)) !== "unauthenticated") {
-            if (otherServer) return yield* failure("already_authenticated");
-          } else {
-            if (clientId === "" || clientSecret === "") return yield* failure("login_failed");
-            // The server the user chose travels with the key, so another client can't redirect it.
-            const serverUrl = requested === undefined ? current.file.serverUrl : requested;
-            yield* cli.configServer(executable, serverUrl ?? DEFAULT_SERVER_URL);
-            if (serverUrl !== current.file.serverUrl) {
-              yield* SynchronizedRef.updateEffect(state, (latest) => {
-                const file: SecretsFile = { ...latest.file, serverUrl };
-                return save(file).pipe(Effect.as({ ...latest, file }));
-              });
-            }
-            yield* cli.loginApiKey(executable, {
-              clientId: Redacted.make(clientId),
-              clientSecret: Redacted.make(clientSecret),
-            });
-            // A lock or logout arrived while signing in. Signing out again honors either one,
-            // where `bw logout` having run before this login would otherwise be undone.
-            if ((yield* SynchronizedRef.get(state)).epoch !== epoch) {
-              yield* cli.logout(executable).pipe(Effect.ignore);
-              return yield* failure("unauthenticated");
-            }
-            // Signed in now: drop the cached "signed out" so a wrong master password next reads as
-            // locked, and the next status check learns the account's email.
-            yield* SynchronizedRef.update(state, (latest) => ({ ...latest, account: null }));
-          }
-          return yield* unlockWith(executable, input.password, epoch);
-        }),
-      );
-    }),
     unlock: Effect.fn("SecretsService.unlock")(function* (input) {
       const { epoch } = yield* SynchronizedRef.get(state);
       return yield* exclusive(

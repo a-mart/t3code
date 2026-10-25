@@ -4,8 +4,8 @@ import { ProjectId } from "../baseSchemas.ts";
 
 /**
  * Bitwarden-backed secrets for agents. Item values never cross this contract:
- * snapshots carry metadata only, and the only values clients send are the
- * master password and API key used to sign in.
+ * snapshots carry metadata only, and the only value clients send is the
+ * master password that unlocks the vault.
  */
 
 export const ForkSecretsStatus = Schema.Literals([
@@ -79,7 +79,7 @@ export const ForkSecretsState = Schema.Struct({
   account: Schema.NullOr(ForkSecretsAccount),
   /** The server `bw` signs in to; null means Bitwarden's US cloud. */
   serverUrl: Schema.NullOr(Schema.String),
-  /** Copyable sign-in command for accounts that can't use an API key. */
+  /** Signs T3's own `bw` in when run once in a terminal on the host; null without a CLI. */
   loginCommand: Schema.NullOr(Schema.String),
   /** Collections this account can see; filled only while unlocked. */
   availableCollections: Schema.Array(ForkSecretsCollection),
@@ -105,16 +105,7 @@ export const ForkSecretsConfigureInput = Schema.Struct({
 });
 export type ForkSecretsConfigureInput = typeof ForkSecretsConfigureInput.Type;
 
-// Plain strings: a refinement that fails would echo the value in its decode error.
-export const ForkSecretsConnectInput = Schema.Struct({
-  clientId: Schema.String,
-  clientSecret: Schema.String,
-  password: Schema.String,
-  /** The server the user chose, so another client's choice can't redirect the API key. */
-  serverUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
-});
-export type ForkSecretsConnectInput = typeof ForkSecretsConnectInput.Type;
-
+// A plain string: a refinement that fails would echo the value in its decode error.
 export const ForkSecretsUnlockInput = Schema.Struct({
   password: Schema.String,
 });
@@ -146,8 +137,6 @@ const FORK_SECRETS_FAILURE_MESSAGES = {
   bad_response: "The Bitwarden CLI returned output T3 couldn't read.",
   unauthenticated: "Bitwarden isn't signed in on this host.",
   already_authenticated: "Log out of Bitwarden before changing the server.",
-  login_failed:
-    "Bitwarden sign-in failed. Check the API key, the server, and that this host can reach Bitwarden.",
   locked: "Bitwarden is locked. Unlock it in Settings → Secrets.",
   unlock_failed: "Bitwarden didn't unlock. Check the master password.",
   invalid_server_url: "Enter a server URL that starts with https://.",

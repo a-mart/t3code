@@ -5,7 +5,6 @@ import * as RpcGroup from "effect/rpc/RpcGroup";
 import { AuthSettingsWriteScope, EnvironmentAuthorizationError } from "../auth.ts";
 import {
   ForkSecretsConfigureInput,
-  ForkSecretsConnectInput,
   ForkSecretsError,
   ForkSecretsSetCollectionsInput,
   ForkSecretsState,
@@ -17,7 +16,6 @@ import {
 export const FORK_WS_METHODS = {
   secretsGetState: "forkSecrets.getState",
   secretsConfigure: "forkSecrets.configure",
-  secretsConnect: "forkSecrets.connect",
   secretsUnlock: "forkSecrets.unlock",
   secretsLock: "forkSecrets.lock",
   secretsLogout: "forkSecrets.logout",
@@ -43,7 +41,6 @@ const EmptyInput = Schema.Struct({});
 export const ForkWsRpcGroup = RpcGroup.make(
   secretsRpc(FORK_WS_METHODS.secretsGetState, EmptyInput),
   secretsRpc(FORK_WS_METHODS.secretsConfigure, ForkSecretsConfigureInput),
-  secretsRpc(FORK_WS_METHODS.secretsConnect, ForkSecretsConnectInput),
   secretsRpc(FORK_WS_METHODS.secretsUnlock, ForkSecretsUnlockInput),
   secretsRpc(FORK_WS_METHODS.secretsLock, EmptyInput),
   secretsRpc(FORK_WS_METHODS.secretsLogout, EmptyInput),
@@ -57,7 +54,6 @@ export const ForkWsRpcGroup = RpcGroup.make(
 /** Mutations, so clients can gate controls on the same scope the server enforces. */
 export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.secretsConfigure]: AuthSettingsWriteScope,
-  [FORK_WS_METHODS.secretsConnect]: AuthSettingsWriteScope,
   [FORK_WS_METHODS.secretsUnlock]: AuthSettingsWriteScope,
   [FORK_WS_METHODS.secretsLock]: AuthSettingsWriteScope,
   [FORK_WS_METHODS.secretsLogout]: AuthSettingsWriteScope,

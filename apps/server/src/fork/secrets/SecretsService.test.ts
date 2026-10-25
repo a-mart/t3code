@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - pinning test archives needs a synchronous digest.
+// @effect-diagnostics nodeBuiltinImport:off - pinning test archives needs a synchronous digest, and
+// signing in runs the shown command in a shell.
 import * as EffectNodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -16,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
@@ -294,13 +296,24 @@ const setup = Effect.fn("setup")(function* (vault: FakeVault = defaultVault()) {
   return { secrets, dataDirectory: cli.dataDirectory, cliPath, vault };
 });
 
-const connect = Effect.fn("connect")(function* (vault: FakeVault = defaultVault()) {
+/** Runs the sign-in command Settings shows, as a person would in a terminal on the host. */
+const signInFromTerminal = Effect.fn("signInFromTerminal")(function* (
+  secrets: SecretsService.SecretsService["Service"],
+) {
+  const { loginCommand } = yield* secrets.getState;
+  assert(loginCommand !== null);
+  yield* Effect.sync(() =>
+    NodeChildProcess.execFileSync("/bin/sh", ["-c", loginCommand], {
+      env: hostEnvironment,
+      stdio: "ignore",
+    }),
+  );
+});
+
+const signIn = Effect.fn("signIn")(function* (vault: FakeVault = defaultVault()) {
   const harness = yield* setup(vault);
-  const state = yield* harness.secrets.connect({
-    clientId: vault.clientId,
-    clientSecret: vault.clientSecret,
-    password: vault.password,
-  });
+  yield* signInFromTerminal(harness.secrets);
+  const state = yield* harness.secrets.unlock({ password: vault.password });
   return { ...harness, state };
 });
 
@@ -339,9 +352,11 @@ const runAs = (
   });
 
 describe("Bitwarden connection", () => {
-  it.live("connects with an API key and keeps secrets out of arguments and stray variables", () =>
+  it.live("signs in with the shown command and keeps the password out of arguments", () =>
     Effect.gen(function* () {
-      const { state, dataDirectory, vault } = yield* connect();
+      // The ambient BITWARDENCLI_APPDATA_DIR would fail the fake, so this also proves the command
+      // signs in T3's own login.
+      const { state, dataDirectory, vault } = yield* signIn();
       expect(state.status).toBe("ready");
       expect(state.account).toEqual({
         email: "agent@example.com",
@@ -352,24 +367,20 @@ describe("Bitwarden connection", () => {
         "Infra",
       ]);
       expect(state.availableCollections[0]?.organizationName).toBe("Acme");
-      expect(state.loginCommand).toContain("BITWARDENCLI_APPDATA_DIR=");
 
       const invocations = yield* readInvocations(dataDirectory);
-      const commands = invocations.map((invocation) =>
-        invocation.args.find((arg) => !arg.startsWith("-")),
+      // The terminal signs in and locks again, so the session key it printed stops working.
+      const fromTerminal = invocations.filter(
+        (invocation) => invocation.args[0] !== "--nointeraction",
       );
-      expect(commands).toContain("login");
-      expect(commands).toContain("unlock");
-      for (const invocation of invocations) {
-        expect(invocation.args[0]).toBe("--nointeraction");
-        const joined = invocation.args.join(" ");
-        expect(joined).not.toContain(vault.password);
-        expect(joined).not.toContain(vault.clientSecret);
+      expect(fromTerminal.map((invocation) => invocation.args)).toEqual([["login"], ["lock"]]);
+      const fromT3 = invocations.filter((invocation) => invocation.args[0] === "--nointeraction");
+      expect(fromT3.some((invocation) => invocation.args.includes("unlock"))).toBe(true);
+      for (const invocation of fromT3) {
+        expect(invocation.args).not.toContain("login");
+        expect(invocation.args.join(" ")).not.toContain(vault.password);
         expect(invocation.bwVariables).not.toContain("BW_PASSWORD");
         expect(invocation.session).not.toBe("other");
-        if (!invocation.args.includes("login")) {
-          expect(invocation.bwVariables).not.toContain("BW_CLIENTSECRET");
-        }
       }
     }).pipe(
       Effect.provide(layerReal),
@@ -381,9 +392,8 @@ describe("Bitwarden connection", () => {
     Effect.gen(function* () {
       const vault = defaultVault();
       const { secrets } = yield* setup(vault);
-      const wrong = yield* secrets
-        .connect({ clientId: vault.clientId, clientSecret: vault.clientSecret, password: "nope" })
-        .pipe(Effect.flip);
+      yield* signInFromTerminal(secrets);
+      const wrong = yield* secrets.unlock({ password: "nope" }).pipe(Effect.flip);
       expect(wrong.reason).toBe("unlock_failed");
       expect((yield* secrets.getState).status).toBe("locked");
       const unlocked = yield* secrets.unlock({ password: vault.password });
@@ -396,13 +406,12 @@ describe("Bitwarden connection", () => {
 
   it.live("names who is signed in while the vault is locked", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory, vault } = yield* connect();
+      const { secrets, dataDirectory, vault } = yield* signIn();
       expect((yield* secrets.lock).account?.email).toBe(vault.email);
       yield* secrets.logout;
       yield* writeFakeVault(dataDirectory, { ...vault, email: "someone-else@example.com" });
-      yield* secrets
-        .connect({ clientId: vault.clientId, clientSecret: vault.clientSecret, password: "nope" })
-        .pipe(Effect.flip);
+      yield* signInFromTerminal(secrets);
+      yield* secrets.unlock({ password: "nope" }).pipe(Effect.flip);
       const state = yield* secrets.getState;
       expect(state.status).toBe("locked");
       expect(state.account?.email).toBe("someone-else@example.com");
@@ -414,7 +423,7 @@ describe("Bitwarden connection", () => {
 
   it.live("lets a lock win over an unlock that was still finishing", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory, vault } = yield* connect();
+      const { secrets, dataDirectory, vault } = yield* signIn();
       yield* secrets.lock;
       const pause = yield* CliPause;
       yield* pause.arm("listCollections");
@@ -440,7 +449,7 @@ describe("Bitwarden connection", () => {
 
   it.live("lets a lock win over an unlock that was still checking the account", () =>
     Effect.gen(function* () {
-      const { secrets, vault } = yield* connect();
+      const { secrets, vault } = yield* signIn();
       yield* secrets.lock;
       const pause = yield* CliPause;
       yield* pause.arm("status");
@@ -460,7 +469,7 @@ describe("Bitwarden connection", () => {
 
   it.live("keeps the first unlock's session when a second unlock waited behind it", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory, vault } = yield* connect();
+      const { secrets, dataDirectory, vault } = yield* signIn();
       yield* grantProdDb(secrets);
       yield* secrets.lock;
       const unlocksBefore = (yield* readInvocations(dataDirectory)).filter((invocation) =>
@@ -488,82 +497,9 @@ describe("Bitwarden connection", () => {
     ),
   );
 
-  it.live("lets a logout win over a sign-in that was still in progress", () =>
-    Effect.gen(function* () {
-      const vault = defaultVault();
-      const { secrets } = yield* setup(vault);
-      const pause = yield* CliPause;
-      yield* pause.arm("configServer");
-      const connecting = yield* secrets
-        .connect({
-          clientId: vault.clientId,
-          clientSecret: vault.clientSecret,
-          password: vault.password,
-        })
-        .pipe(Effect.flip, Effect.forkChild);
-      yield* pause.reached;
-      expect((yield* secrets.logout).status).toBe("unauthenticated");
-      yield* pause.release;
-      expect((yield* Fiber.join(connecting)).reason).toBe("unauthenticated");
-      expect((yield* secrets.getState).status).toBe("unauthenticated");
-    }).pipe(
-      Effect.provide(layerPausable),
-      Effect.provideService(HostProcess.Environment, hostEnvironment),
-    ),
-  );
-
-  it.live("refuses a sign-in for another server while an account is signed in", () =>
-    Effect.gen(function* () {
-      const { secrets, vault } = yield* connect();
-      const elsewhere = {
-        clientId: vault.clientId,
-        clientSecret: vault.clientSecret,
-        password: vault.password,
-        serverUrl: "https://vault.bitwarden.eu",
-      };
-      expect((yield* secrets.connect(elsewhere).pipe(Effect.flip)).reason).toBe(
-        "already_authenticated",
-      );
-      yield* secrets.lock;
-      expect((yield* secrets.connect(elsewhere).pipe(Effect.flip)).reason).toBe(
-        "already_authenticated",
-      );
-      expect((yield* secrets.getState).status).toBe("locked");
-      // Naming the signed-in server, spelled out or not, still unlocks.
-      const same = yield* secrets.connect({
-        ...elsewhere,
-        serverUrl: "https://vault.bitwarden.com",
-      });
-      expect(same.status).toBe("ready");
-    }).pipe(
-      Effect.provide(layerReal),
-      Effect.provideService(HostProcess.Environment, hostEnvironment),
-    ),
-  );
-
-  it.live("signs in to the server the request names, not one another client chose", () =>
-    Effect.gen(function* () {
-      const vault = defaultVault();
-      const { secrets } = yield* setup(vault);
-      // Another client switched this host to a self-hosted server after this form loaded.
-      yield* secrets.configure({ serverUrl: "https://vault.example.com" });
-      const state = yield* secrets.connect({
-        clientId: vault.clientId,
-        clientSecret: vault.clientSecret,
-        password: vault.password,
-        serverUrl: null,
-      });
-      expect(state.serverUrl).toBeNull();
-      expect(state.account?.serverUrl).toBe("https://vault.bitwarden.com");
-    }).pipe(
-      Effect.provide(layerReal),
-      Effect.provideService(HostProcess.Environment, hostEnvironment),
-    ),
-  );
-
   it.live("applies a collection change made during a sync after the sync", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* secrets.setCollections({
         collectionIds: [INFRA_COLLECTION_ID, BILLING_COLLECTION_ID],
       });
@@ -593,7 +529,7 @@ describe("Bitwarden connection", () => {
 
   it.live("reports a kept session it couldn't remove when stay-unlocked turns off", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* secrets.configure({ keepUnlocked: true });
       const error = yield* secrets.configure({ keepUnlocked: false }).pipe(Effect.flip);
       expect(error.reason).toBe("persist_failed");
@@ -603,26 +539,9 @@ describe("Bitwarden connection", () => {
     ),
   );
 
-  it.live("reports a rejected API key and stays signed out", () =>
-    Effect.gen(function* () {
-      const vault = defaultVault();
-      const { secrets } = yield* setup(vault);
-      const error = yield* secrets
-        .connect({ clientId: vault.clientId, clientSecret: "wrong", password: vault.password })
-        .pipe(Effect.flip);
-      expect(error.reason).toBe("login_failed");
-      // The fake CLI echoes a secret on stderr; it must not surface anywhere.
-      expect(error.message).not.toContain(PROD_DB_PASSWORD);
-      expect((yield* secrets.getState).status).toBe("unauthenticated");
-    }).pipe(
-      Effect.provide(layerReal),
-      Effect.provideService(HostProcess.Environment, hostEnvironment),
-    ),
-  );
-
   it.live("locks and logs out, and refuses to change servers while signed in", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       const changing = yield* secrets
         .configure({ serverUrl: "https://vault.example.com" })
         .pipe(Effect.flip);
@@ -665,7 +584,7 @@ describe("Bitwarden connection", () => {
 describe("catalog", () => {
   it.live("keeps aliases and grants by item id across syncs and starts new items ungranted", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory, vault } = yield* connect();
+      const { secrets, dataDirectory, vault } = yield* signIn();
       const selected = yield* secrets.setCollections({ collectionIds: [INFRA_COLLECTION_ID] });
       expect(selected.items.map((item) => [item.alias, item.grant])).toEqual([
         ["DEPLOY_TOKEN", []],
@@ -712,7 +631,7 @@ describe("catalog", () => {
 
   it.live("rejects invalid and duplicate aliases", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* secrets.setCollections({ collectionIds: [INFRA_COLLECTION_ID] });
       const reserved = yield* secrets
         .updateItem({ itemId: PROD_DB_ITEM_ID, alias: "PATH" })
@@ -734,15 +653,12 @@ describe("catalog", () => {
 
   it.live("starts a fresh catalog when a different account signs in", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory, vault } = yield* connect();
+      const { secrets, dataDirectory, vault } = yield* signIn();
       yield* grantProdDb(secrets);
       yield* secrets.logout;
       yield* writeFakeVault(dataDirectory, { ...vault, email: "someone-else@example.com" });
-      const state = yield* secrets.connect({
-        clientId: vault.clientId,
-        clientSecret: vault.clientSecret,
-        password: vault.password,
-      });
+      yield* signInFromTerminal(secrets);
+      const state = yield* secrets.unlock({ password: vault.password });
       expect(state.account?.email).toBe("someone-else@example.com");
       expect(state.selectedCollections).toEqual([]);
       expect(state.items).toEqual([]);
@@ -754,7 +670,7 @@ describe("catalog", () => {
 
   it.live("rejects a collection the account can't see", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       const error = yield* secrets
         .setCollections({ collectionIds: ["9f9f9f9f-0000-4000-8000-000000000000"] })
         .pipe(Effect.flip);
@@ -769,7 +685,7 @@ describe("catalog", () => {
 describe("secure commands", () => {
   it.live("delivers granted values and redacts them from both streams", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* grantProdDb(secrets);
       const result = yield* runAs(secrets, {
         aliases: ["PROD_DB"],
@@ -795,7 +711,7 @@ describe("secure commands", () => {
 
   it.live("refuses secrets the project wasn't granted, and names it", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* grantProdDb(secrets);
       const other = yield* runAs(secrets, {
         aliases: ["PROD_DB"],
@@ -828,7 +744,7 @@ describe("secure commands", () => {
 
   it.live("grants to all projects reach every project, and locking refuses new commands", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* secrets.setCollections({ collectionIds: [INFRA_COLLECTION_ID] });
       const state = yield* secrets.updateItem({ itemId: PROD_DB_ITEM_ID, grant: "all" });
       expect(state.items.find((item) => item.itemId === PROD_DB_ITEM_ID)?.grant).toBe("all");
@@ -855,7 +771,7 @@ describe("secure commands", () => {
 
   it.live("drops grants when a collection is deselected", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* grantProdDb(secrets);
       yield* secrets.setCollections({ collectionIds: [BILLING_COLLECTION_ID] });
       const error = yield* runAs(secrets, { aliases: ["PROD_DB"], command: "true" }).pipe(
@@ -870,7 +786,7 @@ describe("secure commands", () => {
 
   it.live("passes the caller's authorization failure through and starts nothing", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* grantProdDb(secrets);
       const refusal = new OrchestratorMcpFailure({ code: "parent_not_active", message: "ended" });
       const error = yield* runAs(secrets, {
@@ -908,7 +824,7 @@ describe("stopping secure commands", () => {
     Effect.gen(function* () {
       const exec = yield* blockingExec;
       yield* Effect.gen(function* () {
-        const { secrets } = yield* connect();
+        const { secrets } = yield* signIn();
         yield* grantProdDb(secrets);
         const running = yield* runAs(secrets, { aliases: ["PROD_DB"], command: "sleep 60" }).pipe(
           Effect.forkChild,
@@ -929,7 +845,7 @@ describe("stopping secure commands", () => {
     Effect.gen(function* () {
       const exec = yield* blockingExec;
       yield* Effect.gen(function* () {
-        const { secrets } = yield* connect();
+        const { secrets } = yield* signIn();
         yield* grantProdDb(secrets);
         const running = yield* runAs(secrets, { aliases: ["PROD_DB"], command: "sleep 60" }).pipe(
           Effect.forkChild,
@@ -962,7 +878,7 @@ describe("stopping secure commands", () => {
         }),
       );
       yield* Effect.gen(function* () {
-        const { secrets } = yield* connect();
+        const { secrets } = yield* signIn();
         yield* grantProdDb(secrets);
         const running = yield* runAs(secrets, { aliases: ["PROD_DB"], command: "true" }).pipe(
           Effect.forkChild,
@@ -983,7 +899,7 @@ describe("stopping secure commands", () => {
     Effect.gen(function* () {
       const exec = yield* blockingExec;
       yield* Effect.gen(function* () {
-        const { secrets } = yield* connect();
+        const { secrets } = yield* signIn();
         yield* grantProdDb(secrets);
         const error = yield* runAs(secrets, {
           aliases: ["PROD_DB"],
@@ -998,7 +914,7 @@ describe("stopping secure commands", () => {
 
   it.live("delivers the value to the real process", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* secrets.setCollections({ collectionIds: [INFRA_COLLECTION_ID] });
       yield* secrets.updateItem({ itemId: PROD_DB_ITEM_ID, grant: [projectA] });
       const state = yield* secrets.getState;
@@ -1065,7 +981,7 @@ describe("one-off values and SSH keys", () => {
 
   it.live("validates one-off names and refuses empty requests", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* grantProdDb(secrets);
       const consume = Effect.succeed(["value"]);
       expect(
@@ -1144,7 +1060,7 @@ describe("one-off values and SSH keys", () => {
         }),
       );
       yield* Effect.gen(function* () {
-        const { secrets } = yield* connect();
+        const { secrets } = yield* signIn();
         const running = yield* runAs(secrets, {
           aliases: [],
           command: "long",
@@ -1176,7 +1092,7 @@ describe("one-off values and SSH keys", () => {
         ],
       };
       yield* Effect.gen(function* () {
-        const { secrets } = yield* connect(vault);
+        const { secrets } = yield* signIn(vault);
         yield* secrets.setCollections({ collectionIds: [INFRA_COLLECTION_ID] });
         const state = yield* secrets.updateItem({ itemId: SSH_ITEM_ID, grant: [projectA] });
         expect(state.items.find((item) => item.itemId === SSH_ITEM_ID)).toMatchObject({
@@ -1214,12 +1130,8 @@ describe("managed Bitwarden CLI", () => {
         installVersion: BitwardenCli.MANAGED_CLI_VERSION,
       });
       expect(state.status).toBe("unauthenticated");
-      const connected = yield* secrets.connect({
-        clientId: vault.clientId,
-        clientSecret: vault.clientSecret,
-        password: vault.password,
-      });
-      expect(connected.status).toBe("ready");
+      yield* signInFromTerminal(secrets);
+      expect((yield* secrets.unlock({ password: vault.password })).status).toBe("ready");
     }).pipe(
       Effect.provide(layerInstalling(fakeCliArchive)),
       Effect.provideService(HostProcess.Environment, hostEnvironment),
@@ -1241,7 +1153,7 @@ describe("managed Bitwarden CLI", () => {
 
   it.live("locks a session opened through another executable when it installs", () =>
     Effect.gen(function* () {
-      const { secrets, vault } = yield* connect();
+      const { secrets, vault } = yield* signIn();
       const state = yield* secrets.installCli;
       expect(state).toMatchObject({ status: "locked", cli: { managed: true } });
       const unlocked = yield* secrets.unlock({ password: vault.password });
@@ -1306,7 +1218,7 @@ describe("sandbox", () => {
   it.live("turns on only once nono works here, then runs secret commands through it", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* grantProdDb(secrets);
       expect(yield* secrets.configure({ sandbox: true }).pipe(Effect.flip)).toMatchObject({
         reason: "sandbox_unavailable",
@@ -1336,7 +1248,7 @@ describe("sandbox", () => {
   it.live("runs nothing while on and nono stops working, and spends no secretRef", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* grantProdDb(secrets);
       const nono = yield* writeFakeNono(yield* managedNono);
       yield* secrets.configure({ sandbox: true });
@@ -1361,7 +1273,7 @@ describe("sandbox", () => {
 
   it.live("refuses names the sandbox would drop, before spending a secretRef", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* grantProdDb(secrets);
       yield* writeFakeNono(yield* managedNono);
       yield* secrets.configure({ sandbox: true });
@@ -1501,7 +1413,7 @@ describe("saving secrets", () => {
 
   it.live("saves a requested value as a login granted to the project", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory } = yield* connect();
+      const { secrets, dataDirectory } = yield* signIn();
       expect((yield* allowSaving(secrets)).saveCollectionId).toBe(INFRA_COLLECTION_ID);
       const value = "nT0k3n-Zx9-Qw8-Er7";
       const result = yield* saveAs(secrets, { username: "svc", source: fromRef(value) });
@@ -1533,7 +1445,7 @@ describe("saving secrets", () => {
 
   it.live("saves a command's output as a note without returning it", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory } = yield* connect();
+      const { secrets, dataDirectory } = yield* signIn();
       yield* allowSaving(secrets);
       const value = "gEn-Val-Zx8Cv7Bn6Mq5";
       const result = yield* saveAs(secrets, {
@@ -1556,7 +1468,7 @@ describe("saving secrets", () => {
 
   it.live("saves nothing when the command fails, and shows why", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory } = yield* connect();
+      const { secrets, dataDirectory } = yield* signIn();
       yield* allowSaving(secrets);
       const itemsBefore = (yield* readFakeVault(dataDirectory)).items.length;
       const result = yield* saveAs(secrets, {
@@ -1579,7 +1491,7 @@ describe("saving secrets", () => {
 
   it.live("filters a minted value from stderr when the command fails afterwards", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory } = yield* connect();
+      const { secrets, dataDirectory } = yield* signIn();
       yield* allowSaving(secrets);
       const itemsBefore = (yield* readFakeVault(dataDirectory)).items.length;
       const result = yield* saveAs(secrets, {
@@ -1598,7 +1510,7 @@ describe("saving secrets", () => {
 
   it.live("saves nothing into a vault that was logged out while the value was made", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory, vault } = yield* connect();
+      const { secrets, dataDirectory, vault } = yield* signIn();
       yield* allowSaving(secrets);
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1611,11 +1523,8 @@ describe("saving secrets", () => {
         ),
       }).pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
       yield* secrets.logout;
-      yield* secrets.connect({
-        clientId: vault.clientId,
-        clientSecret: vault.clientSecret,
-        password: vault.password,
-      });
+      yield* signInFromTerminal(secrets);
+      yield* secrets.unlock({ password: vault.password });
       yield* secrets.setCollections({ collectionIds: [BILLING_COLLECTION_ID] });
       yield* secrets.configure({ saveCollectionId: BILLING_COLLECTION_ID });
       const itemsBefore = (yield* readFakeVault(dataDirectory)).items.length;
@@ -1632,7 +1541,7 @@ describe("saving secrets", () => {
 
   it.live("rechecks the caller after waiting on other vault work, before using its answer", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory } = yield* connect();
+      const { secrets, dataDirectory } = yield* signIn();
       yield* allowSaving(secrets);
       const pause = yield* CliPause;
       const stopped = yield* Ref.make(false);
@@ -1670,7 +1579,7 @@ describe("saving secrets", () => {
 
   it.live("won't save for a run that ended while it waited, though a newer run is live", () =>
     Effect.gen(function* () {
-      const { secrets, dataDirectory } = yield* connect();
+      const { secrets, dataDirectory } = yield* signIn();
       yield* allowSaving(secrets);
       const pause = yield* CliPause;
       const runEnded = yield* Ref.make(false);
@@ -1702,7 +1611,7 @@ describe("saving secrets", () => {
 
   it.live("refuses until the user chooses where secrets are saved", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       const error = yield* saveAs(secrets, { source: fromRef("nT0k3n-Zx9-Qw8-Er7") }).pipe(
         Effect.flip,
       );
@@ -1715,7 +1624,7 @@ describe("saving secrets", () => {
 
   it.live("refuses an alias another secret uses, and a multi-line login", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* allowSaving(secrets);
       const taken = yield* saveAs(secrets, {
         alias: "PROD_DB",
@@ -1734,7 +1643,7 @@ describe("saving secrets", () => {
 
   it.live("stops saving when its collection is no longer synced", () =>
     Effect.gen(function* () {
-      const { secrets } = yield* connect();
+      const { secrets } = yield* signIn();
       yield* allowSaving(secrets);
       const state = yield* secrets.setCollections({ collectionIds: [BILLING_COLLECTION_ID] });
       expect(state.saveCollectionId).toBeNull();
@@ -1751,7 +1660,7 @@ describe("saving secrets", () => {
   it.live("reports a collection Bitwarden won't let the account add to", () =>
     Effect.gen(function* () {
       const vault = defaultVault();
-      const { secrets } = yield* connect({
+      const { secrets } = yield* signIn({
         ...vault,
         collections: vault.collections.map((collection) =>
           collection.id === INFRA_COLLECTION_ID ? { ...collection, readOnly: true } : collection,

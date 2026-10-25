@@ -1,7 +1,6 @@
 import {
   FORK_WS_METHODS,
   type ForkSecretsConfigureInput,
-  type ForkSecretsConnectInput,
   type ForkSecretsError,
   type ForkSecretsSetCollectionsInput,
   type ForkSecretsUnlockInput,
@@ -28,8 +27,6 @@ export const handlers = Effect.gen(function* () {
     [FORK_WS_METHODS.secretsGetState]: () => secrets((s) => s.getState),
     [FORK_WS_METHODS.secretsConfigure]: (input: ForkSecretsConfigureInput) =>
       secrets((s) => s.configure(input)),
-    [FORK_WS_METHODS.secretsConnect]: (input: ForkSecretsConnectInput) =>
-      secrets((s) => s.connect(input)),
     [FORK_WS_METHODS.secretsUnlock]: (input: ForkSecretsUnlockInput) =>
       secrets((s) => s.unlock(input)),
     [FORK_WS_METHODS.secretsLock]: () => secrets((s) => s.lock),

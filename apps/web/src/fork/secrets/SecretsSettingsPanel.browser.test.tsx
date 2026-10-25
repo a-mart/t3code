@@ -1,5 +1,4 @@
-import { EnvironmentId, ForkSecretsError, type ForkSecretsState } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { EnvironmentId, type ForkSecretsState } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -102,59 +101,7 @@ function setup() {
   state.queriedAt = 0;
 }
 
-async function enterCredentials(screen: Awaited<ReturnType<typeof render>>) {
-  await userEvent.type(screen.getByLabelText("API key client ID"), "user.client");
-  await userEvent.type(screen.getByLabelText("API key client secret"), "client-secret");
-  await userEvent.type(screen.getByLabelText("Master password"), "master password");
-}
-
 describe("SecretsSettingsPanel", () => {
-  it("moves a sign-in that left Bitwarden locked to the unlock form, keeping its error", async () => {
-    setup();
-    state.commands.set("connect Bitwarden", async () => {
-      // The API key worked, so the server is signed in now, but the master password didn't.
-      state.server = { ...state.server, status: "locked" };
-      return AsyncResult.failure(Cause.fail(new ForkSecretsError({ reason: "unlock_failed" })));
-    });
-    await using screen = await render(
-      <SecretsSettingsPanel environmentId={EnvironmentId.make("environment")} />,
-    );
-
-    await enterCredentials(screen);
-    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
-
-    await expect.element(screen.getByRole("button", { name: "Unlock" })).toBeInTheDocument();
-    await expect
-      .element(screen.getByText("Bitwarden didn't unlock. Check the master password."))
-      .toBeInTheDocument();
-    expect(screen.getByLabelText("API key client ID").query()).toBeNull();
-  });
-
-  it("sends the API key only to the server the form shows", async () => {
-    setup();
-    let signedInAt: string | null | undefined;
-    // Saving the server choice never reaches the host, so its state still says Bitwarden.com.
-    state.commands.set("secrets settings", async () =>
-      AsyncResult.failure(Cause.fail(new ForkSecretsError({ reason: "timeout" }))),
-    );
-    state.commands.set("connect Bitwarden", async (input) => {
-      signedInAt = (input as { readonly serverUrl?: string | null }).serverUrl;
-      state.server = { ...state.server, status: "ready" };
-      return AsyncResult.success(state.server);
-    });
-    await using screen = await render(
-      <SecretsSettingsPanel environmentId={EnvironmentId.make("environment")} />,
-    );
-
-    await userEvent.click(screen.getByLabelText("Server"));
-    await userEvent.click(screen.getByRole("option", { name: "Bitwarden.eu" }));
-    await enterCredentials(screen);
-    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
-
-    await expect.element(screen.getByText("Unlocked")).toBeInTheDocument();
-    expect(signedInAt).toBe("https://vault.bitwarden.eu");
-  });
-
   it("installs nono before turning on the sandbox on a host without one", async () => {
     setup();
     const calls: Array<string> = [];
