@@ -1,6 +1,7 @@
 import * as Layer from "effect/Layer";
 
 import * as BitwardenCli from "./secrets/BitwardenCli.ts";
+import * as DockerRunner from "./secrets/DockerRunner.ts";
 import * as Nono from "./secrets/Nono.ts";
 import * as SecretsService from "./secrets/SecretsService.ts";
 import * as SecureExec from "./secrets/SecureExec.ts";
@@ -12,5 +13,7 @@ import * as SecureExec from "./secrets/SecureExec.ts";
  * Settings and an agent's `secure_bash` share one session.
  */
 export const layer = SecretsService.layer.pipe(
-  Layer.provide(Layer.mergeAll(BitwardenCli.layer, Nono.layer, SecureExec.layer)),
+  Layer.provide(
+    Layer.mergeAll(BitwardenCli.layer, DockerRunner.layer, Nono.layer, SecureExec.layer),
+  ),
 );

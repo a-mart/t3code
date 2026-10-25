@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -25,6 +26,8 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ManagedBinary from "../managedBinary.ts";
 import * as BitwardenCli from "./BitwardenCli.ts";
+import * as DockerRunner from "./DockerRunner.ts";
+import { installFakeDocker, readFakeDocker } from "./fakeDocker.testkit.ts";
 import {
   BILLING_COLLECTION_ID,
   DEPLOY_TOKEN,
@@ -46,6 +49,7 @@ import * as SecretsService from "./SecretsService.ts";
 import * as SecureExec from "./SecureExec.ts";
 
 const projectA = ProjectId.make("project-a");
+const isSecureCommandError = Schema.is(SecretsService.SecureCommandError);
 const projectB = ProjectId.make("project-b");
 
 const httpServing = (files: ReadonlyMap<string, Uint8Array>) =>
@@ -89,7 +93,7 @@ const memorySecretStore = Layer.sync(ServerSecretStore.ServerSecretStore, () => 
 
 const layerWith = (exec: Layer.Layer<SecureExec.SecureExec, never, never>) =>
   SecretsService.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(BitwardenCli.layer, Nono.layer, exec)),
+    Layer.provideMerge(Layer.mergeAll(BitwardenCli.layer, DockerRunner.layer, Nono.layer, exec)),
     Layer.provideMerge(
       Layer.mergeAll(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-secrets-" }),
@@ -102,7 +106,9 @@ const layerWith = (exec: Layer.Layer<SecureExec.SecureExec, never, never>) =>
   );
 
 const layerReal = SecretsService.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(BitwardenCli.layer, Nono.layer, SecureExec.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(BitwardenCli.layer, DockerRunner.layer, Nono.layer, SecureExec.layer),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-secrets-" }),
@@ -169,7 +175,9 @@ const layerPausableCli = Layer.effectContext(
 ).pipe(Layer.provide(BitwardenCli.layer));
 
 const layerPausable = SecretsService.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(layerPausableCli, Nono.layer, SecureExec.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(layerPausableCli, DockerRunner.layer, Nono.layer, SecureExec.layer),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-secrets-" }),
@@ -194,7 +202,9 @@ const secretStoreFailingRemove = Layer.effect(
 ).pipe(Layer.provide(memorySecretStore));
 
 const layerFailingRemove = SecretsService.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(BitwardenCli.layer, Nono.layer, SecureExec.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(BitwardenCli.layer, DockerRunner.layer, Nono.layer, SecureExec.layer),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-secrets-" }),
@@ -211,7 +221,9 @@ const RELEASE_URL = "https://downloads.example.test/bw-test.zip";
 /** Installs come from `archive`, pinned like the official release unless `release` overrides it. */
 const layerInstalling = (archive: Uint8Array, release: Partial<ManagedBinary.PinnedRelease> = {}) =>
   SecretsService.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(BitwardenCli.layer, Nono.layer, SecureExec.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(BitwardenCli.layer, DockerRunner.layer, Nono.layer, SecureExec.layer),
+    ),
     Layer.provideMerge(
       Layer.mergeAll(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-secrets-" }),
@@ -245,7 +257,9 @@ const layerInstallingNono = (
   release: Partial<ManagedBinary.PinnedRelease> = {},
 ) =>
   SecretsService.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(BitwardenCli.layer, Nono.layer, SecureExec.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(BitwardenCli.layer, DockerRunner.layer, Nono.layer, SecureExec.layer),
+    ),
     Layer.provideMerge(
       Layer.mergeAll(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-secrets-" }),
@@ -330,6 +344,7 @@ const runAs = (
     readonly aliases: ReadonlyArray<string>;
     readonly command: string;
     readonly projectId?: ProjectId;
+    readonly sessionId?: string;
     readonly cwd?: string;
     readonly authorize?: Effect.Effect<void, OrchestratorMcpFailure>;
     readonly stillLive?: Effect.Effect<boolean>;
@@ -342,6 +357,7 @@ const runAs = (
 ) =>
   secrets.runSecureCommand({
     projectId: input.projectId ?? projectA,
+    sessionId: input.sessionId ?? "thread-a",
     cwd: input.cwd ?? process.cwd(),
     aliases: input.aliases,
     command: input.command,
@@ -1394,6 +1410,7 @@ describe("saving secrets", () => {
   ) =>
     secrets.saveSecret({
       projectId: projectA,
+      sessionId: "thread-a",
       cwd: process.cwd(),
       alias: "NEW_TOKEN",
       name: "New token",
@@ -1675,5 +1692,272 @@ describe("saving secrets", () => {
       Effect.provide(layerReal),
       Effect.provideService(HostProcess.Environment, hostEnvironment),
     ),
+  );
+});
+
+describe("Windows hosts", () => {
+  /**
+   * A Windows host: `bw.exe`, Docker Desktop's pipe, and a fake Docker that
+   * runs each container's commands on this machine.
+   */
+  const windowsHost = Effect.fn("windowsHost")(function* (built = true) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-secrets-windows-" });
+    const bin = path.join(root, "bin");
+    const engine = path.join(root, "engine");
+    yield* installFakeDocker({
+      binDirectory: bin,
+      stateDirectory: engine,
+      name: "docker.exe",
+      state: { endpoint: "npipe:////./pipe/dockerDesktopLinuxEngine", built },
+    });
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-windows-project-" });
+    const guest = path.join(root, "guest");
+    const layer = SecretsService.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(BitwardenCli.layer, DockerRunner.layer, Nono.layer, SecureExec.layer),
+      ),
+      Layer.provideMerge(
+        Layer.mergeAll(ServerConfig.layerTest(root, path.join(root, "t3")), memorySecretStore),
+      ),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          EffectNodeCrypto.layer,
+          noDownloads,
+          Layer.succeed(HostProcess.Platform, "win32"),
+          Layer.succeed(HostProcess.Environment, { PATH: bin, DOCKER_CONFIG: engine }),
+          Layer.succeed(HostProcess.HomeDirectory, root),
+          Layer.succeed(DockerRunner.GuestLayoutOverride, {
+            executions: path.join(guest, "executions"),
+            temp: path.join(guest, "tmp"),
+            home: path.join(guest, "home"),
+            askpass: path.join(guest, "askpass"),
+            path: hermeticPath,
+            env: {},
+          }),
+        ),
+      ),
+    );
+    return { bin, engine, workspace, layer };
+  });
+
+  /** Signs in and unlocks with `bw.exe`, as the PowerShell command Settings shows would. */
+  const signInOnWindows = Effect.fn("signInOnWindows")(function* (bin: string) {
+    const secrets = yield* SecretsService.SecretsService;
+    const cli = yield* BitwardenCli.BitwardenCli;
+    const vault = defaultVault();
+    const cliPath = yield* installFakeBitwarden({
+      binDirectory: bin,
+      dataDirectory: cli.dataDirectory,
+      vault,
+      name: "bw.exe",
+    });
+    yield* secrets.configure({ cliPath });
+    const { loginCommand, cli: found } = yield* secrets.getState;
+    const bw = found.path ?? "";
+    expect(bw.endsWith("bw.exe")).toBe(true);
+    expect(loginCommand).toBe(
+      `& { $env:BITWARDENCLI_APPDATA_DIR = '${cli.dataDirectory}'; & '${bw}' login; if ($LASTEXITCODE -eq 0) { & '${bw}' lock }; Remove-Item Env:BITWARDENCLI_APPDATA_DIR }`,
+    );
+    yield* Effect.sync(() =>
+      NodeChildProcess.execFileSync(cliPath, ["login"], {
+        env: { BITWARDENCLI_APPDATA_DIR: cli.dataDirectory },
+        stdio: "ignore",
+      }),
+    );
+    yield* secrets.unlock({ password: vault.password });
+    yield* grantProdDb(secrets);
+    return secrets;
+  });
+
+  it.live("runs commands in the session's container, and destroys it when Bitwarden locks", () =>
+    Effect.gen(function* () {
+      const { bin, engine, workspace, layer } = yield* windowsHost();
+      yield* Effect.gen(function* () {
+        const secrets = yield* signInOnWindows(bin);
+        const state = yield* secrets.getState;
+        expect(state.sandbox.enabled).toBe(true);
+        expect(state.sandbox.docker).toEqual({ status: "ready", serverVersion: "29.0.0" });
+        expect(yield* secrets.listForProject(projectA)).toMatchObject({
+          sandboxed: true,
+          containerized: true,
+        });
+        const result = yield* runAs(secrets, {
+          aliases: ["PROD_DB"],
+          command: 'echo "${#PROD_DB} $PROD_DB"',
+          cwd: workspace,
+        });
+        expect(result.stdout).toBe(`${PROD_DB_PASSWORD.length} [redacted:PROD_DB]\n`);
+        expect(Object.keys((yield* readFakeDocker(engine)).containers)).toHaveLength(1);
+        yield* secrets.lock;
+        expect((yield* readFakeDocker(engine)).containers).toEqual({});
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("filters a value an earlier command left in the container from later output", () =>
+    Effect.gen(function* () {
+      const { bin, workspace, layer } = yield* windowsHost();
+      yield* Effect.gen(function* () {
+        const secrets = yield* signInOnWindows(bin);
+        yield* runAs(secrets, {
+          aliases: ["PROD_DB"],
+          command: 'printf "%s" "$PROD_DB" > "$HOME/cache"',
+          cwd: workspace,
+        });
+        const later = yield* runAs(secrets, {
+          aliases: [],
+          command: 'cat "$HOME/cache"',
+          cwd: workspace,
+          oneOff: { names: ["OTHER"], consume: Effect.succeed(["unrelated-Zx8Cv7Bn6Mq5"]) },
+        });
+        expect(later.stdout).toBe("[redacted:PROD_DB]");
+        expect(later.redacted).toBe(true);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("destroys every container when Bitwarden locks, even one given only one-use values", () =>
+    Effect.gen(function* () {
+      const { bin, engine, workspace, layer } = yield* windowsHost();
+      yield* Effect.gen(function* () {
+        const secrets = yield* signInOnWindows(bin);
+        yield* runAs(secrets, {
+          aliases: [],
+          command: "true",
+          cwd: workspace,
+          oneOff: { names: ["TYPED"], consume: Effect.succeed(["typed-Zx8Cv7Bn6Mq5"]) },
+        });
+        expect(Object.keys((yield* readFakeDocker(engine)).containers)).toHaveLength(1);
+        yield* secrets.lock;
+        expect((yield* readFakeDocker(engine)).containers).toEqual({});
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("destroys containers when Bitwarden turns out to be locked outside T3", () =>
+    Effect.gen(function* () {
+      const { bin, engine, workspace, layer } = yield* windowsHost();
+      yield* Effect.gen(function* () {
+        const secrets = yield* signInOnWindows(bin);
+        const cli = yield* BitwardenCli.BitwardenCli;
+        yield* runAs(secrets, { aliases: ["PROD_DB"], command: "true", cwd: workspace });
+        expect(Object.keys((yield* readFakeDocker(engine)).containers)).toHaveLength(1);
+        // `bw lock` in a terminal ends the session T3 holds.
+        yield* Effect.sync(() =>
+          NodeChildProcess.execFileSync(NodePath.join(bin, "bw.exe"), ["lock"], {
+            env: { BITWARDENCLI_APPDATA_DIR: cli.dataDirectory },
+            stdio: "ignore",
+          }),
+        );
+        const error = yield* runAs(secrets, {
+          aliases: ["PROD_DB"],
+          command: "true",
+          cwd: workspace,
+        }).pipe(Effect.flip);
+        assert(isSecureCommandError(error));
+        expect(error.reason).toBe("locked");
+        expect((yield* readFakeDocker(engine)).containers).toEqual({});
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  const saveGenerated = (
+    secrets: SecretsService.SecretsService["Service"],
+    workspace: string,
+    command: string,
+  ) =>
+    Effect.gen(function* () {
+      yield* secrets.setCollections({ collectionIds: [INFRA_COLLECTION_ID] });
+      yield* secrets.configure({ saveCollectionId: INFRA_COLLECTION_ID });
+      return yield* secrets.saveSecret({
+        projectId: projectA,
+        sessionId: "thread-a",
+        cwd: workspace,
+        alias: "MINTED",
+        name: "Minted",
+        kind: "login",
+        username: null,
+        source: { _tag: "Command", command, aliases: [], timeout: Duration.seconds(30) },
+        authorize: Effect.void,
+        stillLive: Effect.succeed(true),
+      });
+    });
+
+  it.live("destroys the container a secret was saved from", () =>
+    Effect.gen(function* () {
+      const { bin, engine, workspace, layer } = yield* windowsHost();
+      yield* Effect.gen(function* () {
+        const secrets = yield* signInOnWindows(bin);
+        const saved = yield* saveGenerated(
+          secrets,
+          workspace,
+          'v=gen-Zx8Cv7Bn6Mq5Wl4; printf "%s" "$v" > "$HOME/minted"; echo "$v"',
+        );
+        expect(saved.saved).toBe(true);
+        expect((yield* readFakeDocker(engine)).containers).toEqual({});
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("destroys the container when a save's command printed too much to read", () =>
+    Effect.gen(function* () {
+      const { bin, engine, workspace, layer } = yield* windowsHost();
+      yield* Effect.gen(function* () {
+        const secrets = yield* signInOnWindows(bin);
+        const error = yield* saveGenerated(
+          secrets,
+          workspace,
+          'echo gen-Zx8Cv7Bn6Mq5Wl4 > "$HOME/minted"; head -c 2000000 /dev/zero',
+        ).pipe(Effect.flip);
+        assert(isSecureCommandError(error));
+        expect(error.reason).toBe("value_invalid");
+        expect((yield* readFakeDocker(engine)).containers).toEqual({});
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("destroys the container when a value it received is revoked", () =>
+    Effect.gen(function* () {
+      const { bin, engine, workspace, layer } = yield* windowsHost();
+      yield* Effect.gen(function* () {
+        const secrets = yield* signInOnWindows(bin);
+        yield* runAs(secrets, { aliases: ["PROD_DB"], command: "true", cwd: workspace });
+        expect(Object.keys((yield* readFakeDocker(engine)).containers)).toHaveLength(1);
+        yield* secrets.updateItem({ itemId: PROD_DB_ITEM_ID, grant: [] });
+        expect((yield* readFakeDocker(engine)).containers).toEqual({});
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "runs nothing until the secure runner is installed, without spending one-use values",
+    () =>
+      Effect.gen(function* () {
+        const { bin, workspace, layer } = yield* windowsHost(false);
+        yield* Effect.gen(function* () {
+          const secrets = yield* signInOnWindows(bin);
+          expect((yield* secrets.getState).sandbox.docker?.status).toBe("runner_missing");
+          const spent = yield* Ref.make(false);
+          const error = yield* runAs(secrets, {
+            aliases: ["PROD_DB"],
+            command: "true",
+            cwd: workspace,
+            oneOff: { names: ["ONE_OFF"], consume: Ref.set(spent, true).pipe(Effect.as(["x"])) },
+          }).pipe(Effect.flip);
+          assert(isSecureCommandError(error));
+          expect(error.reason).toBe("runner_unavailable");
+          expect(yield* Ref.get(spent)).toBe(false);
+          const installed = yield* secrets.installSandbox;
+          expect(installed.sandbox.docker?.status).toBe("ready");
+          const result = yield* runAs(secrets, {
+            aliases: ["PROD_DB"],
+            command: "echo ran",
+            cwd: workspace,
+          });
+          expect(result.stdout).toBe("ran\n");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

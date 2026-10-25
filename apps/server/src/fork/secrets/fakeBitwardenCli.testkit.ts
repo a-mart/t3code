@@ -207,13 +207,20 @@ export const installFakeBitwarden = Effect.fn("installFakeBitwarden")(function* 
   readonly binDirectory: string;
   readonly dataDirectory: string;
   readonly vault: FakeVault;
+  /** `bw.exe` for a Windows host. */
+  readonly name?: string;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fileSystem.makeDirectory(input.binDirectory, { recursive: true });
   yield* fileSystem.makeDirectory(input.dataDirectory, { recursive: true });
-  const executable = path.join(input.binDirectory, "bw");
-  yield* fileSystem.writeFileString(executable, FAKE_BW_SCRIPT, { mode: 0o755 });
+  const executable = path.join(input.binDirectory, input.name ?? "bw");
+  // Named outright: a Windows host's PATH doesn't lead to node.
+  yield* fileSystem.writeFileString(
+    executable,
+    FAKE_BW_SCRIPT.replace("#!/usr/bin/env node", `#!${process.execPath}`),
+    { mode: 0o755 },
+  );
   yield* writeFakeVault(input.dataDirectory, input.vault);
   return executable;
 });

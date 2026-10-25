@@ -79,6 +79,11 @@ const OFFICIAL_RELEASES: Readonly<Partial<Record<string, ManagedBinary.PinnedRel
     45_806_876,
     "269b67559caab860d1737f7554b32bdb8be9285d5689fee55193c137a0df9973",
   ),
+  "win32-x64": official(
+    `bw-windows-${MANAGED_CLI_VERSION}.zip`,
+    39_075_364,
+    "7b4528962fa1dccc6fdb9ddbec57981004bb6146dedbb5c4c2637756376818e7",
+  ),
 };
 
 /** Replaces the official release, for tests that install from a local archive. */
@@ -260,11 +265,15 @@ const make = Effect.gen(function* () {
     FileSystem.FileSystem | Path.Path | HttpClient.HttpClient
   >();
   const config = yield* ServerConfig.ServerConfig;
+  const platform = yield* HostProcess.Platform;
+  const windows = platform === "win32";
+  // npm's `bw.cmd` needs a shell to start, so Windows looks for `bw.exe` only.
+  const executableName = windows ? "bw.exe" : "bw";
   const dataDirectory = path.join(config.stateDir, "bitwarden-cli");
-  const managedPath = path.join(config.stateDir, "fork", "bin", "bw");
+  const managedPath = path.join(config.stateDir, "fork", "bin", executableName);
   const release =
     (yield* ManagedCliReleaseOverride) ??
-    OFFICIAL_RELEASES[`${yield* HostProcess.Platform}-${yield* HostProcess.Architecture}`] ??
+    OFFICIAL_RELEASES[`${platform}-${yield* HostProcess.Architecture}`] ??
     null;
   // One `bw` at a time: concurrent runs race on the CLI's data file.
   const serial = yield* Semaphore.make(1);
@@ -375,9 +384,11 @@ const make = Effect.gen(function* () {
   const inspect = Effect.fn("BitwardenCli.inspect")(function* (candidate: string) {
     if (!path.isAbsolute(candidate)) return null;
     const info = yield* fileSystem.stat(candidate).pipe(Effect.option);
-    if (Option.isNone(info) || info.value.type !== "File" || (info.value.mode & 0o111) === 0) {
-      return null;
-    }
+    // Windows has no execute bit; there only `.exe` files run.
+    const runnable = windows
+      ? candidate.toLowerCase().endsWith(".exe")
+      : Option.isSome(info) && (info.value.mode & 0o111) !== 0;
+    if (Option.isNone(info) || info.value.type !== "File" || !runnable) return null;
     const realPath = yield* fileSystem
       .realPath(candidate)
       .pipe(Effect.orElseSucceed(() => candidate));
@@ -397,7 +408,6 @@ const make = Effect.gen(function* () {
   });
 
   const resolve = Effect.fn("BitwardenCli.resolve")(function* (configuredPath: string | null) {
-    if ((yield* HostProcess.Platform) === "win32") return { _tag: "Missing" } as const;
     if (configuredPath !== null) {
       return (yield* inspect(configuredPath)) ?? ({ _tag: "Missing" } as const);
     }
@@ -406,14 +416,17 @@ const make = Effect.gen(function* () {
       return { ...managed, executable: { ...managed.executable, managed: true } };
     }
     const host = yield* HostProcess.Environment;
-    // POSIX only: Windows hosts returned above.
+    // Windows variable names are case-insensitive; `Path` is common there.
+    const pathVariable = windows
+      ? Object.entries(host).find(([name]) => name.toUpperCase() === "PATH")?.[1]
+      : host.PATH;
     const directories = [
-      ...(host.PATH ?? "").split(":").filter((entry) => entry.length > 0),
-      ...SYSTEM_DIRECTORIES,
+      ...(pathVariable ?? "").split(windows ? ";" : ":").filter((entry) => entry.length > 0),
+      ...(windows ? [] : SYSTEM_DIRECTORIES),
     ];
     let unusable: BitwardenCliResolution | undefined;
     for (const directory of new Set(directories)) {
-      const resolution = yield* inspect(path.join(directory, "bw"));
+      const resolution = yield* inspect(path.join(directory, executableName));
       if (resolution?._tag === "Found") return resolution;
       unusable ??= resolution ?? undefined;
     }
@@ -517,11 +530,11 @@ const make = Effect.gen(function* () {
 
   const install: BitwardenCli["Service"]["install"] = Effect.gen(function* () {
     if (release === null) return yield* failure("install_unsupported");
-    // The release zips hold one regular file named `bw`.
+    // The release zips hold one regular file, `bw` or `bw.exe`.
     yield* ManagedBinary.installPinnedRelease({
       release,
       target: managedPath,
-      extract: ManagedBinary.singleFileZip("bw"),
+      extract: ManagedBinary.singleFileZip(executableName),
       probeVersion,
     }).pipe(
       Effect.provide(installServices),

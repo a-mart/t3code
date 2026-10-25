@@ -83,11 +83,18 @@ const sandboxBaseEnvironment = (
 };
 
 /** Keys pasted on Windows carry CRLF line endings, which `ssh-add` rejects. */
-const normalizeSshPrivateKey = (key: string): string =>
+export const normalizeSshPrivateKey = (key: string): string =>
   key.includes("PRIVATE KEY-----") ? `${key.replace(/\r\n?/g, "\n").trimEnd()}\n` : key;
 
 export class SecureExecError extends Schema.TaggedError<SecureExecError>()("SecureExecError", {
-  stage: Schema.Literals(["temp_directory", "spawn", "ssh_agent", "ssh_key", "sandbox_path"]),
+  stage: Schema.Literals([
+    "temp_directory",
+    "spawn",
+    "ssh_agent",
+    "ssh_key",
+    "sandbox_path",
+    "runner",
+  ]),
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -102,6 +109,8 @@ export class SecureExecError extends Schema.TaggedError<SecureExecError>()("Secu
         return "ssh-add rejected an SSH key.";
       case "sandbox_path":
         return "The sandbox can't grant a folder whose path contains a comma.";
+      case "runner":
+        return "Docker couldn't run the command.";
     }
   }
 }

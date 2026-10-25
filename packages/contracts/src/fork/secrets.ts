@@ -54,6 +54,13 @@ export const ForkSecretsCli = Schema.Struct({
 });
 export type ForkSecretsCli = typeof ForkSecretsCli.Type;
 
+/** Windows hosts run every secret-backed command in a Linux container through Docker Desktop. */
+export const ForkSecretsDocker = Schema.Struct({
+  status: Schema.Literals(["docker_missing", "engine_unavailable", "runner_missing", "ready"]),
+  serverVersion: Schema.NullOr(Schema.String),
+});
+export type ForkSecretsDocker = typeof ForkSecretsDocker.Type;
+
 export const ForkSecretsSandbox = Schema.Struct({
   /** Secret-backed commands run inside nono, and none run without it while this is on. */
   enabled: Schema.Boolean,
@@ -64,6 +71,8 @@ export const ForkSecretsSandbox = Schema.Struct({
   managed: Schema.Boolean,
   /** The version T3 installs on this host's platform; null where it can't install one. */
   installVersion: Schema.NullOr(Schema.String),
+  /** Present on hosts that sandbox with Docker instead of nono; the fields above are then unused. */
+  docker: Schema.optionalKey(Schema.NullOr(ForkSecretsDocker)),
 });
 export type ForkSecretsSandbox = typeof ForkSecretsSandbox.Type;
 
@@ -89,7 +98,7 @@ export const ForkSecretsState = Schema.Struct({
   keepUnlocked: Schema.Boolean,
   /** Where `save_secret` creates items; null when agents can't save secrets. */
   saveCollectionId: Schema.NullOr(Schema.String),
-  /** `secure_bash` runs only on macOS and Linux hosts. */
+  /** False on hosts from builds that couldn't run `secure_bash` on Windows. */
   secureCommandsSupported: Schema.Boolean,
   sandbox: ForkSecretsSandbox,
 });
@@ -154,6 +163,9 @@ const FORK_SECRETS_FAILURE_MESSAGES = {
     "T3 couldn't install nono. Check that this host can reach github.com, then try again.",
   sandbox_install_unsupported:
     "T3 can't install nono on this platform. Install nono yourself, then try again.",
+  docker_unavailable: "Docker Desktop isn't running on this host. Start it, then check again.",
+  runner_install_failed:
+    "T3 couldn't build its secure runner. Check that Docker Desktop is running and can reach Docker Hub, then try again.",
   persist_failed: "T3 couldn't save the secrets settings on this host.",
 } as const;
 

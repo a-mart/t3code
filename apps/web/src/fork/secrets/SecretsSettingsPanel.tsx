@@ -4,6 +4,7 @@ import {
   type ForkSecretItem,
   type ForkSecretsCollection,
   type ForkSecretsConfigureInput,
+  type ForkSecretsDocker,
   type ForkSecretsState,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -142,7 +143,7 @@ export function SecretsSettingsPanel({ environmentId }: { readonly environmentId
       reportFailure: false,
     }),
     installSandbox: useAtomCommand(forkSecrets.installSandbox, {
-      label: "install nono",
+      label: "install the sandbox",
       reportFailure: false,
     }),
   };
@@ -261,6 +262,7 @@ export function SecretsSettingsPanel({ environmentId }: { readonly environmentId
         onInstallSandbox={() =>
           run("install-sandbox", () => commands.installSandbox({ ...env, input: {} }))
         }
+        onRefresh={query.refresh}
       />
     </SettingsPageContainer>
   );
@@ -519,7 +521,8 @@ function CliSetup(props: BitwardenSectionProps) {
           </p>
         </div>
       ) : null}
-      {props.state.status !== "cli_missing" ? null : (
+      {/* Only Windows hosts sandbox with Docker, and Homebrew and npm's bw.cmd don't apply there. */}
+      {props.state.status !== "cli_missing" || props.state.sandbox.docker ? null : (
         <div className="grid gap-2">
           <p className="text-xs text-muted-foreground">
             {canInstall
@@ -1105,11 +1108,13 @@ function AgentsSection({
   busy,
   onConfigure,
   onInstallSandbox,
+  onRefresh,
 }: {
   readonly state: ForkSecretsState;
   readonly busy: string | null;
   readonly onConfigure: BitwardenSectionProps["onConfigure"];
   readonly onInstallSandbox: () => Promise<Outcome>;
+  readonly onRefresh: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const destination = state.selectedCollections.find(
@@ -1131,12 +1136,21 @@ function AgentsSection({
           </p>
         </div>
       </SettingsRow>
-      <SandboxRow
-        state={state}
-        busy={busy}
-        onConfigure={onConfigure}
-        onInstallSandbox={onInstallSandbox}
-      />
+      {state.sandbox.docker ? (
+        <DockerRow
+          docker={state.sandbox.docker}
+          busy={busy}
+          onInstall={onInstallSandbox}
+          onRefresh={onRefresh}
+        />
+      ) : (
+        <SandboxRow
+          state={state}
+          busy={busy}
+          onConfigure={onConfigure}
+          onInstallSandbox={onInstallSandbox}
+        />
+      )}
       <SettingsRow
         {...searchableSetting("fork-secrets-save")}
         description={
@@ -1170,6 +1184,58 @@ function AgentsSection({
         }
       />
     </SettingsSection>
+  );
+}
+
+function DockerRow({
+  docker,
+  busy,
+  onInstall,
+  onRefresh,
+}: {
+  readonly docker: ForkSecretsDocker;
+  readonly busy: string | null;
+  readonly onInstall: () => Promise<Outcome>;
+  readonly onRefresh: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const installing = busy === "install-sandbox";
+  const install = () =>
+    void onInstall().then((outcome) => setError(outcome.ok ? null : outcome.message));
+  const detail = installing
+    ? "Building the secure runner. The first build downloads about 400 MB and takes a few minutes…"
+    : docker.status === "docker_missing"
+      ? "Docker isn't installed. Install Docker Desktop, start it, then check again."
+      : docker.status === "engine_unavailable"
+        ? "Docker Desktop isn't running, or isn't using Linux containers. Start it, then check again."
+        : docker.status === "runner_missing"
+          ? `Docker ${docker.serverVersion ?? ""} is running. Install the secure runner to let agents run commands with secrets.`
+          : `Docker ${docker.serverVersion ?? ""} · secure runner installed.`;
+  return (
+    <SettingsRow
+      {...searchableSetting("fork-secrets-docker")}
+      description={
+        <>
+          On Windows, every secret-backed command runs in a Linux container with only the project
+          mounted, a clean environment, and none of this host's logins or SSH keys. Each thread
+          keeps its own container, shared with its subagents, until Bitwarden locks, a secret it
+          received is revoked, or it sits idle for an hour. Nothing runs outside Docker.
+          <span className="mt-1 block">{detail}</span>
+        </>
+      }
+      status={error ? <span className="text-destructive">{error}</span> : null}
+      control={
+        installing ? (
+          <Spinner />
+        ) : docker.status === "runner_missing" ? (
+          <Button size="xs" disabled={busy !== null} onClick={install}>
+            <DownloadIcon /> Install secure runner
+          </Button>
+        ) : docker.status === "ready" ? null : (
+          <RetryButton onClick={onRefresh} />
+        )
+      }
+    />
   );
 }
 

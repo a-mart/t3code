@@ -63,6 +63,12 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["nono sandbox isolate secure_bash home folder write access credentials"],
   },
   {
+    id: "fork-secrets-docker",
+    title: "Run secret commands in Docker",
+    to: "/settings/secrets",
+    searchTerms: ["docker desktop container secure runner windows sandbox secure_bash"],
+  },
+  {
     id: "fork-secrets-keep-unlocked",
     title: "Stay unlocked across restarts",
     to: "/settings/secrets",

@@ -13,15 +13,16 @@ This is the Bitwarden Password Manager, not Bitwarden Secrets Manager.
 1. In **Settings → Secrets**, select **Install Bitwarden CLI**. T3 downloads the official `bw` from
    Bitwarden's GitHub releases onto the host, checks it against a SHA-256 pinned in T3, and keeps it
    in its data folder. Each T3 update can pin a newer `bw`; **Update** appears next to the CLI when
-   one is available. A `bw` you installed yourself, with Homebrew or npm, works too. T3 keeps its own
+   one is available. A `bw` you installed yourself, with Homebrew or npm, works too; on Windows, only a
+   `bw.exe`, so use T3's copy rather than npm's. T3 keeps its own
    `bw` login under `~/.t3/userdata/bitwarden-cli`, so it never touches yours, and unlocking one never
    locks the other.
 2. Use a dedicated Bitwarden account that can see only what agents should reach, for example a member
    of one organization collection.
 3. In **Settings → Secrets**, choose the server, then run the sign-in command shown there once in a
    terminal on the host and sign in as that account. A terminal in any T3 project on the host works.
-   For an SSO account, add `--sso` after `login`. Select **Check again**, then unlock with the master
-   password.
+   On Windows, the command is for PowerShell. For an SSO account, add `--sso` after `login`. Select
+   **Check again**, then unlock with the master password.
 4. Under **Bitwarden collections**, choose the collections to sync and select **Save and sync**.
    Logins share their password, secure notes their text, and SSH keys their private key.
 5. Under **Secrets**, open each secret's project menu and grant it to projects, or to **All projects**.
@@ -71,7 +72,31 @@ In the sandbox, a command:
 A command that signs in with a secret, such as `docker login`, leaves nothing behind, and a command
 can authenticate only with the secrets it was given. While the setting is on, nothing runs without
 nono: if nono stops working, secret-backed commands fail until you fix it or turn the sandbox off.
-Each command starts about 50 ms slower. Linux hosts need a kernel with Landlock.
+Each command starts about 50 ms slower. Linux hosts need a kernel with Landlock; WSL's kernel has it,
+so a WSL environment works like any Linux host.
+
+### Windows
+
+nono doesn't run on Windows, so there every secret-backed command runs in Docker, as in Forge, and the
+sandbox switch is replaced by the Docker status. Install Docker Desktop with Linux containers, start
+it, then select **Install secure runner** in **Settings → Secrets**. T3 builds its runner image in
+Docker; the first build downloads about 400 MB and takes a few minutes.
+
+In Docker, a command:
+
+- runs in a Debian container with bash, git, ssh, curl, jq, rsync, node, npm, pnpm, python3, psql, and
+  build tools, as an unprivileged user with a read-only system;
+- sees only the project folder, at `/workspace`, plus a linked worktree's git directory;
+- starts from a clean environment with only the secrets it asked for, which never appear in Docker's
+  settings or logs;
+- gets a copy of `~/.ssh/known_hosts` and `~/.ssh/config`, but none of your logins or SSH keys.
+
+Each thread gets one container, which its subagents share, so the home folder and anything installed
+outside the project carry over from command to command. The container is deleted when Bitwarden locks
+or signs out, when a secret it received is revoked, after an hour without commands, after a
+`save_secret` command that creates a credential, and when T3 stops; if T3 crashes, it ends itself
+within seconds. Nothing runs outside Docker: while Docker Desktop
+is stopped, secret-backed commands fail.
 
 ## Locking and restarts
 
@@ -97,7 +122,7 @@ returned to the agent is filtered. The sandbox limits what a secret-backed comma
 the agent's own shell runs outside it. Grant each project only what it needs, and keep the agent
 account separate from your own.
 
-Secrets need a macOS or Linux host.
+On Windows, secret-backed commands need Docker Desktop; see [Windows](#windows).
 
 ## Troubleshooting
 
@@ -113,3 +138,5 @@ Secrets need a macOS or Linux host.
 | nono can't sandbox commands on this host       | Turn the sandbox off and on again to reinstall T3's copy. On Linux, the kernel needs Landlock.      |
 | T3 couldn't install nono                       | Check that the host can reach github.com, then try again.                                           |
 | A sandboxed command reports a permission error | It reached outside the project or used a host login. Pass the credential as a secret instead.       |
+| Docker Desktop isn't running on this host      | Start Docker Desktop with Linux containers, then select **Check again**.                            |
+| T3 couldn't build its secure runner            | Check that Docker Desktop is running and can reach Docker Hub, then try again.                      |

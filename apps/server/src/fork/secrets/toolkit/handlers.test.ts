@@ -80,6 +80,7 @@ const runTool = (input: {
           Effect.succeed({
             bitwarden: "ready" as const,
             sandboxed: false,
+            containerized: false,
             secrets:
               requested === projectId
                 ? [{ alias: "PROD_DB", kind: "login" as const, name: "Prod DB", username: "app" }]
@@ -276,6 +277,7 @@ describe("list_secrets", () => {
       expect(result).toEqual({
         bitwarden: "ready",
         sandboxed: false,
+        containerized: false,
         secrets: [{ alias: "PROD_DB", kind: "login", name: "Prod DB", username: "app" }],
       });
     }),

@@ -27,10 +27,11 @@ const dependencies = [
 
 const ListSecretsTool = Tool.make("list_secrets", {
   description:
-    "List the secrets from the user's Bitwarden vault that agents in this project may use with secure_bash: each one's alias (also its environment variable name in secure_bash), kind (login, note, or ssh_key), item name, and non-secret username. Values are never returned. When bitwarden is locked or not_connected, ask the user to unlock or connect it in Settings → Secrets. Secrets not listed here aren't granted to this project; ask the user to grant one in Settings → Secrets. sandboxed tells whether secure_bash runs commands in a sandbox (see secure_bash).",
+    "List the secrets from the user's Bitwarden vault that agents in this project may use with secure_bash: each one's alias (also its environment variable name in secure_bash), kind (login, note, or ssh_key), item name, and non-secret username. Values are never returned. When bitwarden is locked or not_connected, ask the user to unlock or connect it in Settings → Secrets. Secrets not listed here aren't granted to this project; ask the user to grant one in Settings → Secrets. sandboxed tells whether secure_bash runs commands in a sandbox, and containerized whether that sandbox is a Linux container (see secure_bash).",
   success: Schema.Struct({
-    bitwarden: Schema.Literals(["ready", "locked", "not_connected", "unsupported_host"]),
+    bitwarden: Schema.Literals(["ready", "locked", "not_connected"]),
     sandboxed: Schema.Boolean,
+    containerized: Schema.Boolean,
     secrets: Schema.Array(
       Schema.Struct({
         alias: Schema.String,
@@ -60,6 +61,7 @@ const SecureBashTool = Tool.make("secure_bash", {
     "- For a value that isn't in Bitwarden, call request_secret, then pass { ref: secretRef, name: VAR } in secretRefs to get it as VAR for this command only. A secretRef works once.",
     "- Runs non-interactively with /bin/bash in the thread's workspace: no TTY or prompts. Background processes stop when the command exits. Default timeout 120 seconds, maximum 3000.",
     "- When list_secrets reports sandboxed, the command runs in a sandbox: it can write only in the workspace (with its git directories) and temporary folders such as $TMPDIR, HOME is an empty folder deleted afterwards, and the host's own logins and private keys aren't available. Pass every credential the command needs as a secret.",
+    "- When list_secrets reports containerized, the command instead runs in a Debian Linux container with bash, git, ssh, curl, jq, rsync, node, npm, pnpm, python3, psql, and build tools. Only the workspace is visible, at the command's working directory (/workspace when the host is Windows), so use relative or Linux paths. HOME and anything installed outside the workspace carry over between this thread's commands, and its subagents', until Bitwarden locks, a secret the container received is revoked, a save_secret command runs in it, or it sits idle for an hour. The host's ~/.ssh/known_hosts and config are copied in; its logins and private keys aren't.",
     "- Result: exitCode, timedOut, stdout, stderr, and redacted (true when a value was filtered out).",
   ].join("\n"),
   parameters: Schema.Struct({

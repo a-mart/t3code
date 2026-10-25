@@ -105,7 +105,7 @@ describe("SecretsSettingsPanel", () => {
   it("installs nono before turning on the sandbox on a host without one", async () => {
     setup();
     const calls: Array<string> = [];
-    state.commands.set("install nono", async () => {
+    state.commands.set("install the sandbox", async () => {
       calls.push("install");
       state.server = {
         ...state.server,

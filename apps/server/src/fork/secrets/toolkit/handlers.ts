@@ -20,7 +20,6 @@ const failureCode = (
 ): OrchestratorMcpFailure["code"] => {
   switch (reason) {
     case "not_granted":
-    case "unsupported_host":
       return "capability_denied";
     case "run_stopped":
       return "parent_not_active";
@@ -41,6 +40,7 @@ const failureCode = (
     case "save_not_configured":
     case "sandbox_unavailable":
     case "sandbox_path_unsupported":
+    case "runner_unavailable":
       return "capability_denied";
     default:
       return "orchestration_error";
@@ -100,7 +100,20 @@ const callerExecution = Effect.gen(function* () {
     Effect.asVoid,
     Effect.provide(callerServices),
   );
-  return { projectId: caller.projectId, cwd, stillLive, authorize };
+  // Subagents share the container of the thread that delegated to them, as Forge's workers did.
+  let sessionId: string = caller.id;
+  let lineage = caller.lineage;
+  for (let depth = 0; depth < 16 && lineage.relationshipToParent === "subagent"; depth += 1) {
+    const parentId = lineage.parentThreadId;
+    if (parentId === null) break;
+    const parent = yield* context.threads
+      .getThreadShell(parentId)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (parent === null) break;
+    sessionId = parent.id;
+    lineage = parent.lineage;
+  }
+  return { projectId: caller.projectId, sessionId, cwd, stillLive, authorize };
 });
 
 const consumeRef =
@@ -125,13 +138,14 @@ export const layer = McpToolAccess.toLayer(SecretsToolkit, {
   ),
   secure_bash: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { projectId, cwd, stillLive, authorize } = yield* callerExecution;
+      const { projectId, sessionId, cwd, stillLive, authorize } = yield* callerExecution;
       const secrets = yield* SecretsService.SecretsService;
       const consume = consumeRef(yield* SecretRequests.SecretRequests);
       const refs = input.secretRefs ?? [];
       return yield* secrets
         .runSecureCommand({
           projectId,
+          sessionId,
           cwd,
           aliases: input.secrets,
           command: input.command,
@@ -155,7 +169,7 @@ export const layer = McpToolAccess.toLayer(SecretsToolkit, {
   ),
   save_secret: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { projectId, cwd, stillLive, authorize } = yield* callerExecution;
+      const { projectId, sessionId, cwd, stillLive, authorize } = yield* callerExecution;
       if ((input.secretRef === undefined) === (input.command === undefined)) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
@@ -167,6 +181,7 @@ export const layer = McpToolAccess.toLayer(SecretsToolkit, {
       return yield* secrets
         .saveSecret({
           projectId,
+          sessionId,
           cwd,
           alias: input.alias,
           name: input.name,

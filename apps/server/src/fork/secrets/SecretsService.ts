@@ -46,6 +46,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as BitwardenCli from "./BitwardenCli.ts";
 import type { BoundedOutput } from "./boundedOutput.ts";
+import * as DockerRunner from "./DockerRunner.ts";
 import * as Nono from "./Nono.ts";
 import { makeRedactor, type Redactor } from "./Redactor.ts";
 import * as SecureExec from "./SecureExec.ts";
@@ -73,7 +74,6 @@ const DISPLAY_HEAD_CHARS = 4_000;
 const DISPLAY_TAIL_CHARS = 12_000;
 
 const SecureCommandFailureReason = Schema.Literals([
-  "unsupported_host",
   "not_connected",
   "locked",
   "no_secrets",
@@ -104,6 +104,7 @@ const SecureCommandFailureReason = Schema.Literals([
   "sandbox_unavailable",
   "sandbox_dropped_name",
   "sandbox_path_unsupported",
+  "runner_unavailable",
 ]);
 type SecureCommandFailureReason = typeof SecureCommandFailureReason.Type;
 
@@ -118,8 +119,6 @@ export class SecureCommandError extends Schema.TaggedError<SecureCommandError>()
   override get message(): string {
     const alias = this.alias ?? "A secret";
     switch (this.reason) {
-      case "unsupported_host":
-        return "secure_bash runs only on macOS and Linux hosts.";
       case "not_connected":
         return "Bitwarden isn't connected on this host. Ask the user to connect it in Settings → Secrets.";
       case "locked":
@@ -180,6 +179,8 @@ export class SecureCommandError extends Schema.TaggedError<SecureCommandError>()
         return `The sandbox removes a variable named ${alias} from every command, so the command didn't run. Give a secretRef another name, or ask the user to rename the alias in Settings → Secrets.`;
       case "sandbox_path_unsupported":
         return "The sandbox can't grant a folder whose path contains a comma, so the command didn't run. Ask the user to rename the folder or turn off the sandbox in Settings → Secrets.";
+      case "runner_unavailable":
+        return "This host runs secret-backed commands in Docker, but Docker Desktop or T3's secure runner isn't ready, so the command didn't run. Ask the user to check Settings → Secrets.";
     }
   }
 }
@@ -203,14 +204,20 @@ export interface ProjectSecret {
 }
 
 export interface ProjectSecrets {
-  readonly bitwarden: "ready" | "locked" | "not_connected" | "unsupported_host";
-  /** Whether secret-backed commands run inside nono's sandbox. */
+  readonly bitwarden: "ready" | "locked" | "not_connected";
+  /** Whether secret-backed commands run sandboxed, in nono or a Docker container. */
   readonly sandboxed: boolean;
+  /** Whether they run in a Linux container that keeps its state for the session. */
+  readonly containerized: boolean;
   readonly secrets: ReadonlyArray<ProjectSecret>;
 }
 
 export interface SecureCommandInput<E> {
   readonly projectId: ProjectId;
+  /** Set by `save_secret`, whose command creates a credential. */
+  readonly generates?: boolean;
+  /** The thread a Docker container belongs to: the caller's, or the one that delegated to it. */
+  readonly sessionId: string;
   readonly cwd: string;
   readonly aliases: ReadonlyArray<string>;
   readonly command: string;
@@ -231,6 +238,7 @@ export interface SecureCommandInput<E> {
 
 export interface SaveSecretInput<E> {
   readonly projectId: ProjectId;
+  readonly sessionId: string;
   readonly cwd: string;
   readonly alias: string;
   /** The Bitwarden item's name. */
@@ -331,11 +339,7 @@ interface ConfigureOutcome {
   readonly session: Session | null;
 }
 
-interface Execution {
-  readonly projectId: ProjectId;
-  readonly itemIds: ReadonlySet<string>;
-  /** Holds Bitwarden values, so locking or signing out stops it. */
-  readonly usesVault: boolean;
+interface Execution extends DockerRunner.ContainerHolder {
   readonly stop: Deferred.Deferred<StopReason>;
 }
 
@@ -344,6 +348,19 @@ const commandFailure = (reason: SecureCommandFailureReason, alias?: string) =>
   new SecureCommandError({ reason, ...(alias === undefined ? {} : { alias }) });
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+/**
+ * Signs T3's own `bw` in, then locks it so the session key it prints stops
+ * working. Windows gets PowerShell, its default terminal shell.
+ */
+const loginCommand = (executable: string, dataDirectory: string, platform: NodeJS.Platform) => {
+  if (platform === "win32") {
+    const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    return `& { $env:BITWARDENCLI_APPDATA_DIR = ${quote(dataDirectory)}; & ${quote(executable)} login; if ($LASTEXITCODE -eq 0) { & ${quote(executable)} lock }; Remove-Item Env:BITWARDENCLI_APPDATA_DIR }`;
+  }
+  const prefix = `BITWARDENCLI_APPDATA_DIR=${shellQuote(dataDirectory)}`;
+  return `${prefix} ${shellQuote(executable)} login && ${prefix} ${shellQuote(executable)} lock`;
+};
 
 const collectionLabel = (collection: ForkSecretsCollection) =>
   collection.organizationName === null
@@ -376,6 +393,13 @@ const normalizeServerUrl = (value: string | null | undefined) => {
 };
 
 // Shown instead of a save command's stderr when its stdout, the would-be value, couldn't be read.
+const WITHHOLD_ALL: Redactor = {
+  redact: () => ({
+    text: "[output withheld: the container holds too many secret values to filter it safely]",
+    redacted: true,
+  }),
+};
+
 const UNCHECKED_STDERR =
   "[stderr withheld: the command's stdout couldn't be read, so stderr can't be checked for the new value]";
 
@@ -407,6 +431,7 @@ const make = Effect.gen(function* () {
   const cli = yield* BitwardenCli.BitwardenCli;
   const nono = yield* Nono.Nono;
   const secureExec = yield* SecureExec.SecureExec;
+  const docker = yield* DockerRunner.DockerRunner;
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
@@ -414,7 +439,8 @@ const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const services = yield* Effect.context<Path.Path | Crypto.Crypto | FileSystem.FileSystem>();
   const filePath = path.join(config.stateDir, "fork", "secrets.json");
-  const secureCommandsSupported = platform !== "win32";
+  // nono can't run on Windows, so Forge's Docker runner sandboxes every command there.
+  const containerized = platform === "win32";
 
   const state = yield* SynchronizedRef.make<ServiceState>({
     file: yield* loadSecretsFile(filePath),
@@ -440,11 +466,19 @@ const make = Effect.gen(function* () {
     ).pipe(Effect.mapError(() => failure("persist_failed")));
 
   /** Runs under the state lock: signals every matching command to stop. */
-  const stopExecutions = (reason: StopReason, matches: (execution: Execution) => boolean) =>
+  /** Stops the matching commands, and destroys containers that received a matching value. */
+  const stopExecutions = (
+    reason: StopReason,
+    matches: (holder: DockerRunner.ContainerHolder) => boolean,
+  ) =>
     Effect.forEach(
       [...executions.values()].filter(matches),
       (execution) => Deferred.succeed(execution.stop, reason),
       { discard: true },
+    ).pipe(
+      // A container keeps what earlier commands left in it, one-use values included, so locking
+      // retires every one.
+      Effect.andThen(docker.retire(reason === "stopped_locked" ? () => true : matches)),
     );
 
   const resolveCli = Effect.gen(function* () {
@@ -562,9 +596,9 @@ const make = Effect.gen(function* () {
       const account = yield* accountStatus(resolution.executable, false);
       status = account === "unauthenticated" ? "unauthenticated" : "locked";
     }
-    const sandbox = yield* nono.find;
+    const sandbox = containerized ? null : yield* nono.find;
+    const runner = containerized ? yield* docker.status(false) : null;
     const latest = yield* SynchronizedRef.get(state);
-    const prefix = `BITWARDENCLI_APPDATA_DIR=${shellQuote(cli.dataDirectory)}`;
     return {
       status,
       cli: {
@@ -583,22 +617,28 @@ const make = Effect.gen(function* () {
           : null,
       serverUrl: latest.file.serverUrl,
       loginCommand:
-        executable === null
-          ? null
-          : `${prefix} ${shellQuote(executable.path)} login && ${prefix} ${shellQuote(executable.path)} lock`,
+        executable === null ? null : loginCommand(executable.path, cli.dataDirectory, platform),
       availableCollections: latest.session === null ? [] : latest.availableCollections,
       selectedCollections: latest.file.collections,
       items: latest.file.items,
       lastSyncedAt: latest.file.lastSyncedAt,
       keepUnlocked: latest.file.keepUnlocked,
       saveCollectionId: saveDestination(latest.file)?.id ?? null,
-      secureCommandsSupported,
+      secureCommandsSupported: true,
       sandbox: {
-        enabled: latest.file.sandbox,
+        enabled: containerized || latest.file.sandbox,
         path: sandbox?.path ?? null,
         version: sandbox?.version ?? null,
         managed: sandbox?.managed ?? false,
-        installVersion: nono.installVersion,
+        installVersion: containerized ? null : nono.installVersion,
+        ...(runner === null
+          ? {}
+          : {
+              docker: {
+                status: runner.state,
+                serverVersion: "serverVersion" in runner ? runner.serverVersion : null,
+              },
+            }),
       },
     } satisfies ForkSecretsState;
   }).pipe(Effect.withSpan("SecretsService.getState"));
@@ -722,7 +762,8 @@ const make = Effect.gen(function* () {
         }
         patch.saveCollectionId = id;
       }
-      if (input.sandbox !== undefined) {
+      // Windows always sandboxes with Docker, so the setting is nono's alone.
+      if (input.sandbox !== undefined && !containerized) {
         // Commands run inside nono only once one works here; installing it is a separate step.
         if (input.sandbox && (yield* nono.find) === null) {
           return yield* failure("sandbox_unavailable");
@@ -890,14 +931,14 @@ const make = Effect.gen(function* () {
   )(function* (projectId) {
     const current = yield* SynchronizedRef.get(state);
     return {
-      bitwarden: !secureCommandsSupported
-        ? "unsupported_host"
-        : current.session !== null
+      bitwarden:
+        current.session !== null
           ? "ready"
           : current.file.account === null || current.account?.state === "unauthenticated"
             ? "not_connected"
             : "locked",
-      sandboxed: current.file.sandbox,
+      sandboxed: containerized || current.file.sandbox,
+      containerized,
       secrets: current.file.items
         .filter((item) => forkSecretGrantIncludes(item.grant, projectId))
         .map((item) => ({
@@ -910,17 +951,20 @@ const make = Effect.gen(function* () {
   });
 
   /** A session that `bw` stopped honoring, from outside T3 or after an upgrade. */
+  // Locked outside T3, by `bw lock` or a password change, so it ends like a lock in Settings.
   const dropStaleSession = (epoch: number) =>
-    SynchronizedRef.update(state, (current) =>
-      current.epoch === epoch
-        ? {
-            ...current,
-            session: null,
-            epoch: current.epoch + 1,
-            account: null,
-            availableCollections: [],
-          }
-        : current,
+    SynchronizedRef.updateEffect(state, (current) =>
+      current.epoch !== epoch
+        ? Effect.succeed(current)
+        : stopExecutions("stopped_locked", (execution) => execution.usesVault).pipe(
+            Effect.as({
+              ...current,
+              session: null,
+              epoch: current.epoch + 1,
+              account: null,
+              availableCollections: [],
+            }),
+          ),
     );
 
   /** Count and name checks shared by `secure_bash` and `save_secret` commands. */
@@ -1014,7 +1058,6 @@ const make = Effect.gen(function* () {
   const runSecureCommand = Effect.fn("SecretsService.runSecureCommand")(function* <E>(
     input: SecureCommandInput<E>,
   ): Effect.fn.Return<SecureCommandResult, SecureCommandError | E> {
-    if (!secureCommandsSupported) return yield* commandFailure("unsupported_host");
     const oneOffNames = input.oneOff?.names ?? [];
     if (input.aliases.length + oneOffNames.length === 0) return yield* commandFailure("no_secrets");
     yield* checkNames(input.aliases, oneOffNames);
@@ -1084,9 +1127,12 @@ const make = Effect.gen(function* () {
         const execution = Effect.gen(function* () {
           // Read at the start, so turning the sandbox on covers commands already waiting, and
           // before one-use values are spent: with the sandbox on, nothing runs without nono.
-          const sandboxed = (yield* SynchronizedRef.get(state)).file.sandbox;
+          const sandboxed = !containerized && (yield* SynchronizedRef.get(state)).file.sandbox;
           const sandbox = sandboxed ? yield* nono.find : null;
           if (sandboxed && sandbox === null) return yield* commandFailure("sandbox_unavailable");
+          if (containerized && (yield* docker.status(false)).state !== "ready") {
+            return yield* commandFailure("runner_unavailable");
+          }
           // nono would drop these silently, leaving the command without its credential.
           const dropped =
             sandbox === null
@@ -1106,31 +1152,56 @@ const make = Effect.gen(function* () {
           ]);
           const redactor = makeRedactor(secrets.map(({ name, value }) => ({ label: name, value })));
           if (redactor === null) return yield* commandFailure("redaction_budget");
-          const output = yield* secureExec
-            .run({
-              command: input.command,
-              cwd: input.cwd,
-              deliveries: Object.fromEntries(secrets.map(({ name, value }) => [name, value])),
-              sshKeys: resolved.values
-                .filter(({ item }) => item.kind === "ssh_key")
-                .map(({ value }) => value),
-              timeout: input.timeout,
-              nono: sandbox?.path ?? null,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                commandFailure(
-                  error.stage === "ssh_key"
-                    ? "ssh_key_rejected"
-                    : error.stage === "ssh_agent"
-                      ? "ssh_agent_failed"
-                      : error.stage === "sandbox_path"
-                        ? "sandbox_path_unsupported"
+          const command = {
+            command: input.command,
+            cwd: input.cwd,
+            deliveries: Object.fromEntries(secrets.map(({ name, value }) => [name, value])),
+            sshKeys: resolved.values
+              .filter(({ item }) => item.kind === "ssh_key")
+              .map(({ value }) => value),
+            timeout: input.timeout,
+          };
+          const { output, delivered } = yield* (
+            containerized
+              ? docker.run({
+                  ...command,
+                  sessionId: input.sessionId,
+                  projectId: input.projectId,
+                  itemIds: new Set(resolved.selected.map((item) => item.itemId)),
+                  usesVault: resolved.epoch !== null,
+                  ...(input.generates === true ? { generates: true } : {}),
+                })
+              : secureExec
+                  .run({ ...command, nono: sandbox?.path ?? null })
+                  .pipe(Effect.map((ran) => ({ ...ran, delivered: [] })))
+          ).pipe(
+            Effect.map((ran) => ({ output: ran, delivered: ran.delivered })),
+            Effect.mapError((error) =>
+              commandFailure(
+                error.stage === "ssh_key"
+                  ? "ssh_key_rejected"
+                  : error.stage === "ssh_agent"
+                    ? "ssh_agent_failed"
+                    : error.stage === "sandbox_path"
+                      ? "sandbox_path_unsupported"
+                      : error.stage === "runner"
+                        ? "runner_unavailable"
                         : "start_failed",
-                ),
               ),
-            );
-          return { output, secrets, redactor } satisfies CommandRun;
+            ),
+          );
+          // A container's home folder outlives the command, so its output is filtered for every
+          // value the container has received, not only this command's.
+          const seen = new Set(secrets.map(({ value }) => value));
+          const earlier = delivered.filter(({ value }) => !seen.has(value));
+          if (earlier.length === 0) return { output, secrets, redactor } satisfies CommandRun;
+          const held = [...secrets, ...earlier];
+          return {
+            output,
+            secrets: held,
+            redactor:
+              makeRedactor(held.map(({ name, value }) => ({ label: name, value }))) ?? WITHHOLD_ALL,
+          } satisfies CommandRun;
         });
         const stopped = Deferred.await(stop).pipe(
           Effect.flatMap((reason) => Effect.fail(commandFailure(reason))),
@@ -1162,7 +1233,6 @@ const make = Effect.gen(function* () {
   const saveSecret = Effect.fn("SecretsService.saveSecret")(function* <E>(
     input: SaveSecretInput<E>,
   ): Effect.fn.Return<SaveSecretResult, SecureCommandError | E> {
-    if (!secureCommandsSupported) return yield* commandFailure("unsupported_host");
     if (!isValidForkSecretAlias(input.alias)) {
       return yield* commandFailure("invalid_alias", input.alias);
     }
@@ -1198,10 +1268,12 @@ const make = Effect.gen(function* () {
       const run = yield* admitAndRun(
         {
           projectId: input.projectId,
+          sessionId: input.sessionId,
           cwd: input.cwd,
           aliases,
           command,
           timeout,
+          generates: true,
           authorize: input.authorize,
           stillLive: input.stillLive,
         },
@@ -1351,10 +1423,18 @@ const make = Effect.gen(function* () {
   }).pipe(exclusive, Effect.withSpan("SecretsService.installCli"));
 
   // Outside the vault lock: nono touches no Bitwarden state, and commands find it when they start.
-  const installSandbox: SecretsService["Service"]["installSandbox"] = nono.install.pipe(
-    Effect.andThen(getState),
-    Effect.withSpan("SecretsService.installSandbox"),
-  );
+  const installSandbox: SecretsService["Service"]["installSandbox"] = (
+    containerized
+      ? docker.installRunner.pipe(
+          Effect.mapError((error) =>
+            failure(
+              error.reason === "build_failed" ? "runner_install_failed" : "docker_unavailable",
+            ),
+          ),
+          Effect.asVoid,
+        )
+      : nono.install.pipe(Effect.asVoid)
+  ).pipe(Effect.andThen(getState), Effect.withSpan("SecretsService.installSandbox"));
 
   // Restores a session kept across restarts. Runs in the background: it waits on `bw`.
   const restoreSession = Effect.gen(function* () {
