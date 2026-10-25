@@ -47,13 +47,14 @@ const sandboxFixture = Effect.gen(function* () {
   return { directory, nono, home, realHome: yield* fileSystem.realPath(home) };
 });
 
-/** A throwaway ed25519 key from the host's ssh-keygen. */
-const generateKey = Effect.gen(function* () {
+/** A throwaway key from the host's ssh-keygen: ed25519 in OpenSSH format, or RSA in PEM. */
+const generateKey = Effect.fn("generateKey")(function* (format: "openssh" | "pem" = "openssh") {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-secure-exec-key-" });
-  const keyPath = path.join(directory, "id_ed25519");
-  const output = yield* run(`ssh-keygen -q -t ed25519 -N '' -C t3-test -f '${keyPath}'`);
+  const keyPath = path.join(directory, "id");
+  const type = format === "pem" ? "-t rsa -b 2048 -m PEM" : "-t ed25519";
+  const output = yield* run(`ssh-keygen -q ${type} -N '' -C t3-test -f '${keyPath}'`);
   expect(output.exitCode).toBe(0);
   return yield* fileSystem.readFileString(keyPath);
 });
@@ -159,7 +160,7 @@ describe("SecureExec", () => {
 
   it.live("loads SSH keys into an agent that ends with the command", () =>
     Effect.gen(function* () {
-      const key = yield* generateKey;
+      const key = yield* generateKey();
       const output = yield* run('ssh-add -l && echo "socket=$SSH_AUTH_SOCK"', {
         sshKeys: [key.replaceAll("\n", "\r\n")],
       });
@@ -170,6 +171,23 @@ describe("SecureExec", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       expect(socket).toBeDefined();
       expect(yield* fileSystem.exists(socket!)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("restores the line breaks a single-line paste took out of a key", () =>
+    Effect.gen(function* () {
+      for (const format of ["openssh", "pem"] as const) {
+        const key = yield* generateKey(format);
+        expect(SecureExec.normalizeSshPrivateKey(key.replaceAll("\n", ""))).toBe(key);
+        expect(SecureExec.normalizeSshPrivateKey(key.replaceAll("\n", " "))).toBe(key);
+        expect(SecureExec.normalizeSshPrivateKey(key)).toBe(key);
+      }
+      expect(SecureExec.normalizeSshPrivateKey("hunter2\nwith a newline")).toBe(
+        "hunter2\nwith a newline",
+      );
+      const flattened = (yield* generateKey()).replaceAll("\n", "");
+      const output = yield* run("ssh-add -l", { sshKeys: [flattened] });
+      expect(text(output.stdout)).toContain("t3-test (ED25519)");
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -376,7 +394,7 @@ describe("SecureExec in the sandbox", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const key = yield* generateKey;
+        const key = yield* generateKey();
         const fixture = yield* sandboxFixture;
         const ssh = path.join(fixture.home, ".ssh");
         yield* fileSystem.makeDirectory(ssh);

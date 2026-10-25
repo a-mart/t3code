@@ -82,9 +82,29 @@ const sandboxBaseEnvironment = (
   return base;
 };
 
-/** Keys pasted on Windows carry CRLF line endings, which `ssh-add` rejects. */
-export const normalizeSshPrivateKey = (key: string): string =>
-  key.includes("PRIVATE KEY-----") ? `${key.replace(/\r\n?/g, "\n").trimEnd()}\n` : key;
+// A private key's armor and base64 body; anything else between them, such as an old encrypted PEM
+// key's headers, keeps a value out.
+const PRIVATE_KEY =
+  /^\s*-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----([\sA-Za-z0-9+/=]*)-----END \1PRIVATE KEY-----\s*$/;
+
+/**
+ * A private key in the layout `ssh-add` and OpenSSH read. Keys pasted into a single-line field
+ * arrive with their line breaks gone, and keys from Windows with CRLF endings; only the line
+ * breaks differ, so the body is rewrapped as OpenSSH (70 columns) or PEM (64) writes it. Any
+ * other value comes back unchanged.
+ */
+export const normalizeSshPrivateKey = (value: string): string => {
+  const match = PRIVATE_KEY.exec(value);
+  const label = `${match?.[1] ?? ""}PRIVATE KEY`;
+  const body = match?.[2]?.replace(/\s+/g, "") ?? "";
+  if (match === null || body === "") {
+    return value.includes("PRIVATE KEY-----")
+      ? `${value.replace(/\r\n?/g, "\n").trimEnd()}\n`
+      : value;
+  }
+  const lines = body.match(new RegExp(`.{1,${label === "OPENSSH PRIVATE KEY" ? 70 : 64}}`, "g"));
+  return `-----BEGIN ${label}-----\n${(lines ?? []).join("\n")}\n-----END ${label}-----\n`;
+};
 
 export class SecureExecError extends Schema.TaggedError<SecureExecError>()("SecureExecError", {
   stage: Schema.Literals([

@@ -11,9 +11,11 @@ import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  addProjectsToGrant,
   aliasProblem,
   bitwardenServerChoice,
   grantSummary,
+  groupSecretsByCollection,
   matchesSecretQuery,
   serverHost,
   toggleProjectGrant,
@@ -145,5 +147,49 @@ describe("secrets settings helpers", () => {
     expect(bitwardenServerChoice("https://vault.example.com")).toBe("self-hosted");
     expect(serverHost(null)).toBe("bitwarden.com");
     expect(serverHost("https://vault.bitwarden.eu")).toBe("bitwarden.eu");
+  });
+});
+
+describe("groupSecretsByCollection", () => {
+  const collection = (id: string, name: string) => ({
+    id,
+    organizationId: "org",
+    organizationName: "Acme",
+    name,
+  });
+  const item = (itemId: string, collectionIds: ReadonlyArray<string>): ForkSecretItem => ({
+    itemId,
+    name: itemId,
+    kind: "login",
+    username: null,
+    collectionIds,
+    alias: itemId.toUpperCase(),
+    grant: [],
+  });
+
+  it("lists each item once, under its first synced collection, in the collections' order", () => {
+    const groups = groupSecretsByCollection(
+      [item("a", ["infra"]), item("b", ["billing", "infra"]), item("c", ["gone"])],
+      [
+        collection("billing", "Billing"),
+        collection("infra", "Infra"),
+        collection("empty", "Empty"),
+      ],
+    );
+    expect(groups.map((group) => [group.id, group.items.map((entry) => entry.itemId)])).toEqual([
+      ["billing", ["b"]],
+      ["infra", ["a"]],
+      ["other", ["c"]],
+    ]);
+  });
+});
+
+describe("addProjectsToGrant", () => {
+  const a = ProjectId.make("a");
+  const b = ProjectId.make("b");
+
+  it("adds projects without repeating any, and keeps a grant to every project", () => {
+    expect(addProjectsToGrant([a], [a, b])).toEqual([a, b]);
+    expect(addProjectsToGrant("all", [a])).toBe("all");
   });
 });

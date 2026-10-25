@@ -1428,6 +1428,36 @@ describe("saving secrets", () => {
     return yield* secrets.configure({ saveCollectionId: INFRA_COLLECTION_ID });
   });
 
+  it.live("saves a private key pasted without its line breaks in its usual layout", () =>
+    Effect.gen(function* () {
+      const { secrets, dataDirectory } = yield* signIn();
+      yield* allowSaving(secrets);
+      const body = "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW".repeat(
+        3,
+      );
+      const lines = body.match(/.{1,70}/g) ?? [];
+      const key = `-----BEGIN OPENSSH PRIVATE KEY-----\n${lines.join("\n")}\n-----END OPENSSH PRIVATE KEY-----\n`;
+      const result = yield* saveAs(secrets, {
+        alias: "DEPLOY_KEY",
+        kind: "note",
+        source: fromRef(key.replaceAll("\n", "")),
+      });
+      expect(result.saved).toBe(true);
+      const stored = (yield* readFakeVault(dataDirectory)).items.find(
+        (item) => item.name === "New token",
+      );
+      expect(stored?.notes).toBe(key);
+      const run = yield* runAs(secrets, {
+        aliases: ["DEPLOY_KEY"],
+        command: 'printf "%s" "$DEPLOY_KEY" | wc -l | tr -d " "',
+      });
+      expect(run.stdout).toBe(`${lines.length + 2}\n`);
+    }).pipe(
+      Effect.provide(layerReal),
+      Effect.provideService(HostProcess.Environment, hostEnvironment),
+    ),
+  );
+
   it.live("saves a requested value as a login granted to the project", () =>
     Effect.gen(function* () {
       const { secrets, dataDirectory } = yield* signIn();

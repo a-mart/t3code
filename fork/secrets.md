@@ -51,6 +51,9 @@ Settings → Secrets acts on one host at a time. Pick the host in the scope menu
   through a secret request, or one a command creates, such as a generated password or a new API key.
   It becomes a Bitwarden login or secure note in the collection you chose, granted to the agent's
   project, and shows up under **Secrets** like any other. A command that fails saves nothing.
+- A private key pasted into a secret request loses its line breaks, since the field is a single
+  line. T3 restores them, both when it saves the key and when a command uses one already saved that
+  way.
 
 ## Sandbox
 

@@ -16,6 +16,7 @@ import {
 import * as Option from "effect/Option";
 import {
   CheckIcon,
+  ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
   KeyRoundIcon,
@@ -29,6 +30,8 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
+
+import { cn } from "../../lib/utils";
 
 import { SecretInput } from "../../components/settings/SecretInput";
 import {
@@ -81,9 +84,11 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { forkSecrets } from "./secretsAtoms";
 import {
   BITWARDEN_SERVERS,
+  addProjectsToGrant,
   aliasProblem,
   bitwardenServerChoice,
   grantSummary,
+  groupSecretsByCollection,
   matchesSecretQuery,
   serverHost,
   toggleProjectGrant,
@@ -844,6 +849,19 @@ interface ProjectOption {
   readonly title: string;
 }
 
+type GrantUpdate = (input: {
+  readonly itemId: string;
+  readonly alias?: string;
+  readonly grant?: ForkSecretItem["grant"];
+}) => Promise<Outcome>;
+
+const sameGrant = (left: ForkSecretItem["grant"], right: ForkSecretItem["grant"]) =>
+  left === "all" || right === "all"
+    ? left === right
+    : left.length === right.length && left.every((id) => right.includes(id));
+
+const isGranted = (item: ForkSecretItem) => item.grant === "all" || item.grant.length > 0;
+
 function SecretsSection({
   state,
   projects,
@@ -851,17 +869,60 @@ function SecretsSection({
 }: {
   readonly state: ForkSecretsState;
   readonly projects: ReadonlyArray<ProjectOption>;
-  readonly onUpdate: (input: {
-    readonly itemId: string;
-    readonly alias?: string;
-    readonly grant?: ForkSecretItem["grant"];
-  }) => Promise<Outcome>;
+  readonly onUpdate: GrantUpdate;
 }) {
   const [filter, setFilter] = useState("");
-  const visible = state.items.filter((item) => matchesSecretQuery(item, filter));
-  const grantedCount = state.items.filter(
-    (item) => item.grant === "all" || item.grant.length > 0,
-  ).length;
+  // Collapsed until opened: a vault can sync hundreds of items.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const filtering = filter.trim() !== "";
+  const groups = groupSecretsByCollection(
+    state.items.filter((item) => matchesSecretQuery(item, filter)),
+    state.selectedCollections,
+  );
+  // A filter opens every group with a match.
+  const isOpen = (groupId: string) => filtering || expanded.has(groupId);
+  const shown = groups.flatMap((group) => (isOpen(group.id) ? group.items : []));
+  // Only items still synced: one that left its collection drops out of the selection.
+  const selectedItems = state.items.filter((item) => selected.has(item.itemId));
+  const grantedCount = state.items.filter(isGranted).length;
+
+  const select = (items: ReadonlyArray<ForkSecretItem>, on: boolean) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const item of items) {
+        if (on) next.add(item.itemId);
+        else next.delete(item.itemId);
+      }
+      return next;
+    });
+
+  const applyToSelected = async (
+    grantFor: (grant: ForkSecretItem["grant"]) => ForkSecretItem["grant"],
+  ) => {
+    setBulkPending(true);
+    let failed = 0;
+    let lastMessage: string | null = null;
+    for (const item of selectedItems) {
+      const grant = grantFor(item.grant);
+      if (sameGrant(grant, item.grant)) continue;
+      const outcome = await onUpdate({ itemId: item.itemId, grant });
+      if (!outcome.ok) {
+        failed += 1;
+        lastMessage = outcome.message;
+      }
+    }
+    setBulkPending(false);
+    setBulkError(
+      failed === 0
+        ? null
+        : `${failed} of ${selectedItems.length} weren't updated.${lastMessage ? ` ${lastMessage}` : ""}`,
+    );
+    if (failed === 0) setSelected(new Set());
+  };
+
   return (
     <SettingsSection
       {...searchableSetting("fork-secrets-access")}
@@ -895,26 +956,187 @@ function SecretsSection({
         </Empty>
       ) : (
         <>
-          <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">
-            {grantedCount === 0
-              ? "Nothing is granted yet. Grant a secret to the projects whose agents should use it."
-              : `${grantedCount} of ${state.items.length} granted. Agents use a secret by its alias, which is also its environment variable.`}
-          </p>
-          {visible.map((item) => (
-            <SecretRow
-              key={item.itemId}
-              item={item}
-              items={state.items}
-              projects={projects}
-              onUpdate={onUpdate}
+          <div className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4">
+            <SelectionCheckbox
+              label="Select all shown secrets"
+              items={shown}
+              selected={selected}
+              disabled={bulkPending}
+              onChange={select}
             />
-          ))}
-          {visible.length === 0 ? (
+            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+              {selectedItems.length > 0
+                ? `${selectedItems.length} selected`
+                : grantedCount === 0
+                  ? "Nothing is granted yet. Grant a secret to the projects whose agents should use it."
+                  : `${grantedCount} of ${state.items.length} granted. Agents use a secret by its alias, which is also its environment variable.`}
+            </p>
+            {selectedItems.length > 0 ? (
+              <div className="flex items-center gap-1.5">
+                <BulkGrantMenu
+                  count={selectedItems.length}
+                  projects={projects}
+                  pending={bulkPending}
+                  onApply={(grantFor) => void applyToSelected(grantFor)}
+                />
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={bulkPending}
+                  onClick={() => {
+                    setSelected(new Set());
+                    setBulkError(null);
+                  }}
+                >
+                  Clear
+                </Button>
+              </div>
+            ) : null}
+            {bulkError ? <p className="w-full text-xs text-destructive">{bulkError}</p> : null}
+          </div>
+          {groups.map((group) => {
+            const open = isOpen(group.id);
+            const label = group.collection
+              ? collectionLabel(group.collection)
+              : "Not in a synced collection";
+            const granted = group.items.filter(isGranted).length;
+            return (
+              <div key={group.id} className="border-t border-border/60">
+                <div className="flex items-center gap-3 px-3 py-2 sm:px-4">
+                  <SelectionCheckbox
+                    label={`Select all secrets in ${label}`}
+                    items={group.items}
+                    selected={selected}
+                    disabled={bulkPending}
+                    onChange={select}
+                  />
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    disabled={filtering}
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left text-sm font-medium disabled:cursor-default"
+                    onClick={() =>
+                      setExpanded((current) => {
+                        const next = new Set(current);
+                        if (next.has(group.id)) next.delete(group.id);
+                        else next.add(group.id);
+                        return next;
+                      })
+                    }
+                  >
+                    <ChevronRightIcon
+                      aria-hidden
+                      className={cn("size-3.5 shrink-0 text-muted-foreground", open && "rotate-90")}
+                    />
+                    <span className="truncate">{label}</span>
+                    <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                      {group.items.length} · {granted} granted
+                    </span>
+                  </button>
+                </div>
+                {open
+                  ? group.items.map((item) => (
+                      <SecretRow
+                        key={item.itemId}
+                        item={item}
+                        items={state.items}
+                        projects={projects}
+                        selected={selected.has(item.itemId)}
+                        onSelect={(on) => select([item], on)}
+                        onUpdate={onUpdate}
+                      />
+                    ))
+                  : null}
+              </div>
+            );
+          })}
+          {groups.length === 0 ? (
             <p className="px-4 py-3 text-xs text-muted-foreground">No secrets match “{filter}”.</p>
           ) : null}
         </>
       )}
     </SettingsSection>
+  );
+}
+
+/** Checked when every item is selected, mixed when some are. */
+function SelectionCheckbox({
+  label,
+  items,
+  selected,
+  disabled,
+  onChange,
+}: {
+  readonly label: string;
+  readonly items: ReadonlyArray<ForkSecretItem>;
+  readonly selected: ReadonlySet<string>;
+  readonly disabled: boolean;
+  readonly onChange: (items: ReadonlyArray<ForkSecretItem>, on: boolean) => void;
+}) {
+  const count = items.filter((item) => selected.has(item.itemId)).length;
+  const all = items.length > 0 && count === items.length;
+  return (
+    <Checkbox
+      aria-label={label}
+      checked={all}
+      indeterminate={count > 0 && !all}
+      disabled={disabled || items.length === 0}
+      onCheckedChange={() => onChange(items, !all)}
+    />
+  );
+}
+
+function BulkGrantMenu({
+  count,
+  projects,
+  pending,
+  onApply,
+}: {
+  readonly count: number;
+  readonly projects: ReadonlyArray<ProjectOption>;
+  readonly pending: boolean;
+  readonly onApply: (grantFor: (grant: ForkSecretItem["grant"]) => ForkSecretItem["grant"]) => void;
+}) {
+  const [chosen, setChosen] = useState<ReadonlyArray<ProjectId>>([]);
+  return (
+    <Menu onOpenChange={(open) => (open ? null : setChosen([]))}>
+      <MenuTrigger render={<Button size="xs" variant="outline" disabled={pending} />}>
+        {pending ? <Spinner /> : <UsersIcon />}
+        Grant {count}
+      </MenuTrigger>
+      <MenuPopup align="end">
+        <MenuGroup>
+          <MenuGroupLabel>Add to projects</MenuGroupLabel>
+          {projects.length === 0 ? (
+            <MenuItem disabled>No projects on this environment</MenuItem>
+          ) : (
+            projects.map((project) => (
+              <MenuCheckboxItem
+                key={project.id}
+                checked={chosen.includes(project.id)}
+                closeOnClick={false}
+                onCheckedChange={(on) =>
+                  setChosen((current) =>
+                    on ? [...current, project.id] : current.filter((id) => id !== project.id),
+                  )
+                }
+              >
+                {project.title}
+              </MenuCheckboxItem>
+            ))
+          )}
+        </MenuGroup>
+        <MenuSeparator />
+        <MenuItem
+          disabled={chosen.length === 0}
+          onClick={() => onApply((grant) => addProjectsToGrant(grant, chosen))}
+        >
+          Add to {chosen.length === 1 ? "1 project" : `${chosen.length} projects`}
+        </MenuItem>
+        <MenuItem onClick={() => onApply(() => "all")}>Grant to all projects</MenuItem>
+        <MenuItem onClick={() => onApply(() => [])}>Remove from every project</MenuItem>
+      </MenuPopup>
+    </Menu>
   );
 }
 
@@ -931,16 +1153,16 @@ function SecretRow({
   item,
   items,
   projects,
+  selected,
+  onSelect,
   onUpdate,
 }: {
   readonly item: ForkSecretItem;
   readonly items: ReadonlyArray<ForkSecretItem>;
   readonly projects: ReadonlyArray<ProjectOption>;
-  readonly onUpdate: (input: {
-    readonly itemId: string;
-    readonly alias?: string;
-    readonly grant?: ForkSecretItem["grant"];
-  }) => Promise<Outcome>;
+  readonly selected: boolean;
+  readonly onSelect: (selected: boolean) => void;
+  readonly onUpdate: GrantUpdate;
 }) {
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -978,6 +1200,11 @@ function SecretRow({
     <SettingsRow
       title={
         <span className="flex min-w-0 items-center gap-1.5">
+          <Checkbox
+            aria-label={`Select ${item.name}`}
+            checked={selected}
+            onCheckedChange={(on) => onSelect(on === true)}
+          />
           <KindIcon kind={item.kind} />
           <span className="truncate">{item.name}</span>
         </span>

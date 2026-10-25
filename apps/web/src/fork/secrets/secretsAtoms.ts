@@ -16,6 +16,9 @@ export const forkSecrets = {
   state: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "fork:secrets:state",
     tag: FORK_WS_METHODS.secretsGetState,
+    // Fetched fresh each time the page opens: a kept result would show the vault as it was then,
+    // locked after it was unlocked here, or unlocked after another client locked it.
+    idleTtlMs: 0,
   }),
   configure: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "fork:secrets:configure",

@@ -102,6 +102,57 @@ function setup() {
 }
 
 describe("SecretsSettingsPanel", () => {
+  it("starts collapsed by collection and grants a whole collection at once", async () => {
+    setup();
+    const collection = (id: string, name: string) => ({
+      id,
+      organizationId: "org",
+      organizationName: "Acme",
+      name,
+    });
+    const item = (itemId: string, collectionId: string) => ({
+      itemId,
+      name: `${itemId} secret`,
+      kind: "login" as const,
+      username: null,
+      collectionIds: [collectionId],
+      alias: itemId.toUpperCase(),
+      grant: [] as ReadonlyArray<never>,
+    });
+    state.server = {
+      ...state.server,
+      status: "ready",
+      selectedCollections: [collection("infra", "Infra"), collection("billing", "Billing")],
+      items: [item("db", "infra"), item("deploy", "infra"), item("stripe", "billing")],
+    };
+    state.queried = state.server;
+    const updates: Array<unknown> = [];
+    state.commands.set("update secret", async (input) => {
+      updates.push(input);
+      return AsyncResult.success(state.server);
+    });
+    await using screen = await render(
+      <SecretsSettingsPanel environmentId={EnvironmentId.make("environment")} />,
+    );
+
+    expect(screen.getByText("db secret").query()).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /Acme \/ Infra/ }));
+    await expect.element(screen.getByText("db secret")).toBeInTheDocument();
+    expect(screen.getByText("stripe secret").query()).toBeNull();
+
+    await userEvent.click(screen.getByLabelText("Select all secrets in Acme / Infra"));
+    await expect.element(screen.getByText("2 selected")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Grant 2" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Grant to all projects" }));
+
+    await vi.waitFor(() =>
+      expect(updates).toEqual([
+        { itemId: "db", grant: "all" },
+        { itemId: "deploy", grant: "all" },
+      ]),
+    );
+  });
+
   it("installs nono before turning on the sandbox on a host without one", async () => {
     setup();
     const calls: Array<string> = [];

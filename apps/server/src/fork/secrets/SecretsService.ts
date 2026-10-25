@@ -1143,14 +1143,24 @@ const make = Effect.gen(function* () {
                 ].find(Nono.nonoDropsVariable);
           if (dropped !== undefined) return yield* commandFailure("sandbox_dropped_name", dropped);
           const oneOffValues = input.oneOff === undefined ? [] : yield* input.oneOff.consume;
-          const secrets = yield* validateValues([
+          const given = [
             ...resolved.values.map(({ item, value }) => ({ name: item.alias, value })),
             ...(input.oneOff?.names ?? []).map((name, index) => ({
               name,
               value: oneOffValues[index] ?? "",
             })),
-          ]);
-          const redactor = makeRedactor(secrets.map(({ name, value }) => ({ label: name, value })));
+          ];
+          // A private key whose line breaks a paste lost reaches the command whole again.
+          const secrets = yield* validateValues(
+            given.map(({ name, value }) => ({
+              name,
+              value: SecureExec.normalizeSshPrivateKey(value),
+            })),
+          );
+          // Filtered in both forms, in case the command finds the stored one too.
+          const redactor = makeRedactor(
+            [...secrets, ...given].map(({ name, value }) => ({ label: name, value })),
+          );
           if (redactor === null) return yield* commandFailure("redaction_budget");
           const command = {
             command: input.command,
@@ -1304,8 +1314,9 @@ const make = Effect.gen(function* () {
         };
       }
       if (value === null) return yield* commandFailure("value_invalid", input.alias);
-      yield* checkSavedValue(input.alias, input.kind, value);
-      generated = { value, exitCode: 0, stderr };
+      const saved = SecureExec.normalizeSshPrivateKey(value);
+      yield* checkSavedValue(input.alias, input.kind, saved);
+      generated = { value: saved, exitCode: 0, stderr };
     }
 
     const name = input.name.trim() === "" ? input.alias : input.name.trim();
@@ -1329,7 +1340,8 @@ const make = Effect.gen(function* () {
         if (generated !== null) {
           value = generated.value;
         } else if (input.source._tag === "Ref") {
-          value = yield* input.source.consume;
+          // A key pasted into the single-line request field lost its line breaks; it's stored whole.
+          value = SecureExec.normalizeSshPrivateKey(yield* input.source.consume);
           yield* checkSavedValue(input.alias, input.kind, value);
         } else {
           return yield* commandFailure("value_invalid", input.alias);

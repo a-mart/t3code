@@ -10,6 +10,7 @@ import {
   isValidForkSecretAlias,
   type ForkSecretGrant,
   type ForkSecretItem,
+  type ForkSecretsCollection,
   type ProjectId,
 } from "@t3tools/contracts";
 
@@ -102,4 +103,51 @@ export function matchesSecretQuery(item: ForkSecretItem, query: string): boolean
   return [item.name, item.alias, item.username ?? ""].some((field) =>
     field.toLowerCase().includes(needle),
   );
+}
+
+export interface SecretGroup {
+  /** A collection id, or `other` for items in none of the synced collections. */
+  readonly id: string;
+  readonly collection: ForkSecretsCollection | null;
+  readonly items: ReadonlyArray<ForkSecretItem>;
+}
+
+const OTHER_GROUP_ID = "other";
+
+/**
+ * Items under the first synced collection they belong to, in the collections' order, so an item
+ * in two collections appears once. Collections without items are left out.
+ */
+export function groupSecretsByCollection(
+  items: ReadonlyArray<ForkSecretItem>,
+  collections: ReadonlyArray<ForkSecretsCollection>,
+): ReadonlyArray<SecretGroup> {
+  const byCollection = new Map<string, Array<ForkSecretItem>>();
+  const other: Array<ForkSecretItem> = [];
+  for (const item of items) {
+    const home = collections.find((collection) => item.collectionIds.includes(collection.id));
+    if (home === undefined) {
+      other.push(item);
+      continue;
+    }
+    const group = byCollection.get(home.id) ?? [];
+    group.push(item);
+    byCollection.set(home.id, group);
+  }
+  const groups: Array<SecretGroup> = [];
+  for (const collection of collections) {
+    const grouped = byCollection.get(collection.id);
+    if (grouped !== undefined) groups.push({ id: collection.id, collection, items: grouped });
+  }
+  if (other.length > 0) groups.push({ id: OTHER_GROUP_ID, collection: null, items: other });
+  return groups;
+}
+
+/** The grant with `projectIds` added; one for every project stays that way. */
+export function addProjectsToGrant(
+  grant: ForkSecretGrant,
+  projectIds: ReadonlyArray<ProjectId>,
+): ForkSecretGrant {
+  if (grant === "all") return "all";
+  return [...grant, ...projectIds.filter((id) => !grant.includes(id))];
 }
