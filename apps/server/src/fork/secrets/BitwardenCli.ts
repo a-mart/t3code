@@ -239,11 +239,7 @@ const providerIds = (value: unknown): Effect.Effect<ReadonlyArray<string>, ForkS
       : Effect.fail(failure("bad_response"));
 
 const parseArray = (bytes: Uint8Array): Effect.Effect<ReadonlyArray<unknown>, ForkSecretsError> =>
-  parseJson(bytes).pipe(
-    Effect.flatMap((value) =>
-      Array.isArray(value) ? Effect.succeed(value) : Effect.fail(failure("bad_response")),
-    ),
-  );
+  parseJson(bytes).pipe(Effect.filterOrFail(Array.isArray, () => failure("bad_response")));
 
 const parseRecord = (bytes: Uint8Array): Effect.Effect<Record<string, unknown>, ForkSecretsError> =>
   parseJson(bytes).pipe(

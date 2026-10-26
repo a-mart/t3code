@@ -8,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -66,7 +65,7 @@ const runTool = (input: {
         getThreadShell: () => Ref.get(shell),
       }),
       Layer.mock(ProjectService.ProjectService)({
-        getById: () => Effect.succeed(Option.some({ workspaceRoot: "/work/project" } as never)),
+        getById: () => Effect.succeedSome({ workspaceRoot: "/work/project" } as never),
       }),
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref, projectId: requested }) =>
