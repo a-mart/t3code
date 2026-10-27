@@ -71,9 +71,19 @@ export async function runJourney(
   steps: StepResult[],
 ): Promise<void> {
   const phone = device.pose.form === "phone";
-  const tap = (node: SnapshotNode | undefined, label: string) => {
-    if (!node?.ref) throw new Error(`no ${label} to tap`);
-    return device.agent(["press", `@${node.ref}`]);
+  const tap = async (node: SnapshotNode | undefined, label: string) => {
+    if (!node?.ref || !node.rect) throw new Error(`no ${label} to tap`);
+    // agent-device refuses refs it considers covered, such as on the unfolded Duo's inner
+    // display; the element's centre still takes the tap.
+    await device
+      .agent(["press", `@${node.ref}`])
+      .catch(() =>
+        device.agent([
+          "press",
+          String(Math.round(node.rect!.x + node.rect!.width / 2)),
+          String(Math.round(node.rect!.y + node.rect!.height / 2)),
+        ]),
+      );
   };
 
   /** Screenshot and check the settled screen, and record it as a step. */
@@ -126,10 +136,17 @@ export async function runJourney(
       .catch(() => null);
   }
   if (!threads) throw new Error("the app did not show the fixture threads after pairing");
+  // Rotated only once the app is up: a rotation during launch is lost.
   await delay(1_000);
-  threads = await device.snapshot();
+  threads = await device.orient(device.pose.landscape ? "landscape" : "portrait");
   const tabs = tabBarRect(threads);
+  const wide = threads.viewport.width > threads.viewport.height;
   await capture("threads", threads, [
+    check(
+      device.pose.landscape ? "in landscape" : "in portrait",
+      wide === Boolean(device.pose.landscape),
+      `${Math.round(threads.viewport.width)}×${Math.round(threads.viewport.height)}`,
+    ),
     check("thread list visible", threadRow(threads) !== undefined, "fixture threads"),
     ...(phone ? [check("tab bar visible", inside(tabs, threads), describeRect(tabs))] : []),
   ]);
@@ -252,9 +269,7 @@ export async function runJourney(
   await capture("settings", await device.snapshot());
 
   if (device.pose.form === "tablet" && !device.pose.fold) {
-    await device.agent(["orientation", device.pose.landscape ? "portrait" : "landscape-left"]);
-    await delay(2_000);
-    await capture("rotated", await device.snapshot());
+    await capture("rotated", await device.orient(device.pose.landscape ? "portrait" : "landscape"));
   }
   if (device.pose.fold) {
     await device.agent(["fold", device.pose.fold === "open" ? "closed" : "open"]);

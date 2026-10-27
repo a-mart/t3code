@@ -13,6 +13,9 @@ export const FORK_SETTINGS_SECTION_LABELS: Readonly<Record<ForkSettingsPath, str
   "/settings/secrets": "Secrets",
 };
 
+/** Fork pages listed under the sidebar's Agents heading. */
+export const FORK_AGENT_SETTINGS_PATHS: ReadonlyArray<ForkSettingsPath> = ["/settings/secrets"];
+
 export const FORK_SETTINGS_SECTION_ICONS: Readonly<
   Record<ForkSettingsPath, ComponentType<{ className?: string }>>
 > = {

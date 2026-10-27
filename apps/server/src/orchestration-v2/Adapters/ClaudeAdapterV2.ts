@@ -1587,10 +1587,6 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__list_scheduled_tasks",
   "mcp__t3-code__t3_thread_list",
   "mcp__t3-code__t3_thread_wait",
-  "mcp__t3-code__t3_pending_request_list",
-  "mcp__t3-code__t3_pending_request_read",
-  "mcp__t3-code__t3_thread_configuration",
-  "mcp__t3-code__t3_thread_transfers",
   "mcp__t3-code__t3_worktree_status",
   "mcp__t3-code__t3_worktree_list",
   "mcp__t3-code__t3_project_list",
@@ -1598,8 +1594,6 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_thread_search",
   "mcp__t3-code__t3_preview_list",
   "mcp__t3-code__t3_environment_read",
-  "mcp__t3-code__t3_queue_list",
-  "mcp__t3-code__t3_queue_read",
   "mcp__t3-code__html_preview",
   "mcp__t3-code__html_render",
 ];
@@ -1721,6 +1715,19 @@ function nextClaudeGoal(
     checks: (current.checks ?? 0) + 1,
     lastCheck: text.slice(prefix.length).trim(),
   };
+}
+
+/** The CLI confirms a goal change as a synthetic reply; the goal row shows that change instead. */
+function isClaudeGoalAcknowledgement(message: SDKMessage): boolean {
+  if (
+    message.type !== "assistant" ||
+    message.parent_tool_use_id !== null ||
+    message.message.model !== "<synthetic>"
+  ) {
+    return false;
+  }
+  const text = textFromClaudeContent(message.message.content).trim();
+  return text.startsWith(CLAUDE_GOAL_SET_PREFIX) || text.startsWith("Goal cleared: ");
 }
 
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
@@ -8895,6 +8902,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             return;
           }
+          if (isClaudeGoalAcknowledgement(message)) {
+            // The CLI repeats a local command's output as the turn's result text.
+            if (assistantText !== null) {
+              context.assistant.noticeTexts.add(normalizeClaudeResultText(assistantText.text));
+            }
+            return;
+          }
           // Claude Code echoes /compact's stdout ("Not enough messages to compact.") as a
           // synthetic assistant message. The compaction item reports that outcome; it is not a
           // reply.
@@ -8967,7 +8981,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.assistant.fallbackText.length === 0 &&
             resultText !== null &&
             resultText.text.length > 0 &&
-            !context.assistant.noticeTexts.has(resultText.text)
+            !context.assistant.noticeTexts.has(resultText.text) &&
+            !context.assistant.noticeTexts.has(normalizeClaudeResultText(resultText.text))
           ) {
             context.assistant.fallbackText = resultText.text;
             context.assistant.fallbackNativeItemId = resultText.nativeItemId;
