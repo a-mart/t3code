@@ -22,7 +22,6 @@ const dependencies = [
   ThreadManagementService.ThreadManagementService,
   ProjectService.ProjectService,
   SecretRequests.SecretRequests,
-  SecretsService.SecretsService,
 ];
 
 const ListSecretsTool = Tool.make("list_secrets", {

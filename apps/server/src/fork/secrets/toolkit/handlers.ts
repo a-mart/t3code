@@ -1,12 +1,17 @@
 import { OrchestratorMcpFailure, type ProjectId, type SecretRef } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
-import { isLiveCallerShell } from "../../../mcp/OrchestratorMcpService.ts";
-import { assertFullAccess, assertLiveCaller, loadCaller } from "../../../mcp/threadAccess.ts";
+import {
+  assertFullAccess,
+  assertLiveCaller,
+  isLiveCallerShell,
+  loadCaller,
+} from "../../../mcp/threadAccess.ts";
 import { threadWorkspaceRoot } from "../../../project/threadWorkspaceRoot.ts";
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as SecretsService from "../SecretsService.ts";
@@ -128,18 +133,29 @@ const consumeRef =
         ),
       );
 
+// Optional, so upstream harnesses that build the MCP tools layer need no fork
+// services. `server.ts` always provides it.
+const secretsService = Effect.serviceOption(SecretsService.SecretsService).pipe(
+  Effect.flatMap(
+    Option.match({
+      onNone: () => Effect.die(new Error("The secrets service isn't running on this server.")),
+      onSome: Effect.succeed,
+    }),
+  ),
+);
+
 export const layer = McpToolAccess.toLayer(SecretsToolkit, {
   list_secrets: McpToolAccess.readsAsCaller(() =>
     Effect.gen(function* () {
       const { caller } = yield* callerThread;
-      const secrets = yield* SecretsService.SecretsService;
+      const secrets = yield* secretsService;
       return yield* secrets.listForProject(caller.projectId);
     }),
   ),
   secure_bash: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { projectId, sessionId, cwd, stillLive, authorize } = yield* callerExecution;
-      const secrets = yield* SecretsService.SecretsService;
+      const secrets = yield* secretsService;
       const consume = consumeRef(yield* SecretRequests.SecretRequests);
       const refs = input.secretRefs ?? [];
       return yield* secrets
@@ -176,7 +192,7 @@ export const layer = McpToolAccess.toLayer(SecretsToolkit, {
           message: "Pass exactly one of secretRef or command as the value's source.",
         });
       }
-      const secrets = yield* SecretsService.SecretsService;
+      const secrets = yield* secretsService;
       const consume = consumeRef(yield* SecretRequests.SecretRequests);
       return yield* secrets
         .saveSecret({
