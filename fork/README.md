@@ -120,7 +120,7 @@ fork/release.sh --dry-run   # build only
 It builds the signed macOS app in the sibling worktree `../t3code-fork-build` while dev1 builds the
 Linux server archive and then the Windows x64 release, which embeds that archive as its WSL runtime.
 Then it publishes them all. Set `T3_FORK_LINUX_BUILDER` to build on another x64 Linux host. The builder
-needs `sudo apt-get install -y zip pkg-config libsecret-1-dev` once. The first build on a builder
+needs `sudo apt-get install -y zip pkg-config libsecret-1-dev patchelf` once. The first build on a builder
 installs `vp`, Rust, and `cargo-xwin` for that user, and every build updates the builder's `stable`
 Rust toolchain, since upstream builds with the newest one. Artifacts and logs are under
 `~/.cache/t3code-fork`.
