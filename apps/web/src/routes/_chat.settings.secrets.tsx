@@ -1,27 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { useSettingsScope } from "../components/settings/SettingsScopeContext";
-import { SecretsSettingsPanel } from "../fork/secrets/SecretsSettingsPanel";
-
-function SettingsSecretsRoute() {
-  const { environment, scope } = useSettingsScope();
-  if (!environment) {
-    return (
-      <p className="p-8 text-sm text-muted-foreground">
-        {scope.kind === "environment"
-          ? `Reconnect ${scope.label} to manage its secrets.`
-          : "Connect an environment to manage its secrets."}
-      </p>
-    );
-  }
-  return (
-    <SecretsSettingsPanel
-      key={environment.environmentId}
-      environmentId={environment.environmentId}
-    />
-  );
-}
+import { SecretsSettingsPanel } from "../components/settings/SecretsSettings";
+import { isSecretsFeatureEnabled } from "../env";
 
 export const Route = createFileRoute("/_chat/settings/secrets")({
-  component: SettingsSecretsRoute,
+  beforeLoad: () => {
+    if (!isSecretsFeatureEnabled) throw redirect({ to: "/settings/general", replace: true });
+  },
+  component: SecretsSettingsPanel,
 });
