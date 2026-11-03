@@ -13,7 +13,7 @@ import {
   FORK_SECRET_ALIAS_MAX_LENGTH,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -128,9 +128,9 @@ export const saveSecretsFile = Effect.fn("SecretsState.save")(function* (
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const directory = path.dirname(filePath);
-  const temporary = `${filePath}.${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}.tmp`;
+  const temporary = `${filePath}.${yield* random.uuidV4()}.tmp`;
   yield* Effect.gen(function* () {
     yield* fileSystem.makeDirectory(directory, { recursive: true });
     yield* fileSystem.chmod(directory, 0o700);

@@ -1,12 +1,6 @@
-/**
- * Owns this environment's Bitwarden connection, its secrets catalog, the
- * `secure_bash` commands running with secret values, and `save_secret`.
- *
- * The unlock session lives only in memory. Admission of a command and every
- * change that takes access away (lock, log out, ungrant, collection change)
- * run under the same lock, so a revocation either lands before a command is
- * admitted or stops it after; none can slip between the check and the start.
- */
+// The unlock session lives only in memory. Command admission and every change that removes
+// access (lock, log out, ungrant, collection change) share one lock, so a revocation lands
+// before a command is admitted or stops it after.
 import {
   ForkSecretsError,
   forkSecretGrantIncludes,
@@ -27,7 +21,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -434,10 +428,12 @@ const make = Effect.gen(function* () {
   const docker = yield* DockerRunner.DockerRunner;
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const platform = yield* HostProcess.Platform;
-  const services = yield* Effect.context<Path.Path | Crypto.Crypto | FileSystem.FileSystem>();
+  const services = yield* Effect.context<
+    Path.Path | SecureRandom.SecureRandom | FileSystem.FileSystem
+  >();
   const filePath = path.join(config.stateDir, "fork", "secrets.json");
   // nono can't run on Windows, so Forge's Docker runner sandboxes every command there.
   const containerized = platform === "win32";
@@ -1096,7 +1092,7 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<CommandRun, SecureCommandError | E> {
     return yield* commandPermits.withPermits(1)(
       Effect.gen(function* () {
-        const executionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+        const executionId = yield* random.uuidV4();
         const stop = yield* Deferred.make<StopReason>();
         yield* SynchronizedRef.updateEffect(state, (current) =>
           Effect.gen(function* () {

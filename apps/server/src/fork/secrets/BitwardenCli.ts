@@ -1,14 +1,7 @@
-/**
- * Drives the official Bitwarden Password Manager CLI (`bw`) on this host, and
- * installs a pinned copy of it on request.
- *
- * T3 keeps its own `bw` login in `<stateDir>/bitwarden-cli`, separate from any
- * personal `bw` setup: every unlock replaces the login's one session, so two
- * apps sharing a login would keep locking each other out. Secrets reach `bw`
- * only through environment variables (`--passwordenv`, `BW_SESSION`) or stdin,
- * never through arguments. `bw` stderr can echo item contents, so it is drained
- * and discarded, and failures carry only a fixed reason.
- */
+// T3's own `bw` login lives in <stateDir>/bitwarden-cli: each unlock replaces the login's
+// one session, so sharing a personal login would lock each other out. Secrets reach `bw`
+// only through env vars (--passwordenv, BW_SESSION) or stdin, never arguments, and its
+// stderr is discarded because it can echo item contents.
 import {
   ForkSecretsError,
   type ForkSecretKind,
@@ -16,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -256,7 +249,7 @@ const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const installServices = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | HttpClient.HttpClient
   >();
@@ -452,7 +445,7 @@ const make = Effect.gen(function* () {
   const unlock: BitwardenCli["Service"]["unlock"] = Effect.fn("BitwardenCli.unlock")(
     function* (cli, password) {
       if (Redacted.value(password).length === 0) return yield* failure("unlock_failed");
-      const variable = `T3_BW_PASSWORD_${(yield* crypto.randomUUIDv4().pipe(Effect.orDie))
+      const variable = `T3_BW_PASSWORD_${(yield* random.uuidV4())
         .replaceAll("-", "")
         .toUpperCase()}`;
       const output = yield* invoke(cli, ["unlock", "--raw", "--passwordenv", variable], {
