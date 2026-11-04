@@ -2,7 +2,7 @@
 export const FORK_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `### Secrets
 
-This replaces \`delivery: "file"\` above: run every command that needs a secret with \`secure_bash\`, never your own shell, so its output is filtered.
+Run every command that needs a secret with \`secure_bash\`, never your own shell or \`request_secret\`'s \`delivery: "file"\`, so its output is filtered.
 
 - A password, token, or key the user keeps in Bitwarden: call \`list_secrets\` for the aliases this project may use, then pass the aliases the command needs to \`secure_bash\`. Each value arrives as an environment variable named after its alias.
 - A value that isn't in Bitwarden: call \`request_secret\` without \`delivery\`, then pass its \`secretRef\` to \`secure_bash\` in \`secretRefs\`. This works even when Bitwarden is locked or not connected.
