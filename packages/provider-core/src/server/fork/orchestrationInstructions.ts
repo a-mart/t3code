@@ -6,6 +6,7 @@ Run every command that needs a secret with \`secure_bash\`, never your own shell
 
 - A password, token, or key the user keeps in Bitwarden: call \`list_secrets\` for the aliases this project may use, then pass the aliases the command needs to \`secure_bash\`. Each value arrives as an environment variable named after its alias.
 - A value that isn't in Bitwarden: call \`request_secret\` without \`delivery\`, then pass its \`secretRef\` to \`secure_bash\` in \`secretRefs\`. This works even when Bitwarden is locked or not connected.
+- A sudo password goes the same way, never through \`delivery: "file"\`: in \`secure_bash\`, \`printf '%s\\n' "$PW" | sudo -S -p '' <cmd>\`.
 - To keep a new credential, such as one the user typed or one a command creates, store it with \`save_secret\`.
 - Never ask for a secret value in chat, print one, or write one into the workspace.`,
   `### Waiting on background work
