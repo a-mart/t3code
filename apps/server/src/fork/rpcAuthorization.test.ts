@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   FORK_WS_METHODS,
   WsRpcGroup,
@@ -36,9 +37,23 @@ const state: ForkSecretsState = {
 
 describe("fork RPC authorization", () => {
   it("requires settings permission for every secrets method", () => {
-    for (const method of Object.values(FORK_WS_METHODS)) {
+    for (const method of Object.values(FORK_WS_METHODS).filter((m) =>
+      m.startsWith("forkSecrets."),
+    )) {
       expect(RpcAuthorization.RPC_REQUIRED_SCOPES[method]).toBe(AuthSettingsWriteScope);
     }
+  });
+
+  it("requires provider permission for hub status and logins", () => {
+    expect(RpcAuthorization.RPC_REQUIRED_SCOPES[FORK_WS_METHODS.hubGetStatus]).toBe(
+      AuthProvidersManageScope,
+    );
+    expect(RpcAuthorization.RPC_REQUIRED_SCOPES[FORK_WS_METHODS.hubStartLogin]).toBe(
+      AuthProvidersManageScope,
+    );
+    expect(RpcAuthorization.RPC_REQUIRED_SCOPES[FORK_WS_METHODS.hubFinishLogin]).toBe(
+      AuthProvidersManageScope,
+    );
   });
 
   it.effect("refuses an unlock without settings permission before it reaches the service", () =>

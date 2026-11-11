@@ -28,6 +28,7 @@ import {
   useState,
 } from "react";
 
+import { ForkHubSections } from "../../fork/hub/HubSection"; // fork:
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -628,6 +629,7 @@ export function UsageLimitsPooled({
           </Fragment>
         ))}
       </SegmentPopoverContext>
+      <ForkHubSections presentations={presentations} /> {/* fork: hub routing and logins */}
       <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
         {({ payload }) =>
           payload ? (

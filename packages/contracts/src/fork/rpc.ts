@@ -2,7 +2,19 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 
-import { AuthSettingsWriteScope, EnvironmentAuthorizationError } from "../auth.ts";
+import {
+  AuthProvidersManageScope,
+  AuthSettingsWriteScope,
+  EnvironmentAuthorizationError,
+} from "../auth.ts";
+import {
+  ForkHubError,
+  ForkHubFinishLoginInput,
+  ForkHubLogin,
+  ForkHubStartLoginInput,
+  ForkHubStatus,
+  ForkHubStatusInput,
+} from "./hub.ts";
 import {
   ForkSecretsConfigureInput,
   ForkSecretsError,
@@ -24,6 +36,9 @@ export const FORK_WS_METHODS = {
   secretsUpdateItem: "forkSecrets.updateItem",
   secretsInstallCli: "forkSecrets.installCli",
   secretsInstallSandbox: "forkSecrets.installSandbox",
+  hubGetStatus: "forkHub.getStatus",
+  hubStartLogin: "forkHub.startLogin",
+  hubFinishLogin: "forkHub.finishLogin",
 } as const;
 
 const secretsRpc = <const Tag extends string, Payload extends Schema.Top>(
@@ -37,6 +52,7 @@ const secretsRpc = <const Tag extends string, Payload extends Schema.Top>(
   });
 
 const EmptyInput = Schema.Struct({});
+const HubRpcError = Schema.Union([ForkHubError, EnvironmentAuthorizationError]);
 
 export const ForkWsRpcGroup = RpcGroup.make(
   secretsRpc(FORK_WS_METHODS.secretsGetState, EmptyInput),
@@ -49,6 +65,21 @@ export const ForkWsRpcGroup = RpcGroup.make(
   secretsRpc(FORK_WS_METHODS.secretsUpdateItem, ForkSecretsUpdateItemInput),
   secretsRpc(FORK_WS_METHODS.secretsInstallCli, EmptyInput),
   secretsRpc(FORK_WS_METHODS.secretsInstallSandbox, EmptyInput),
+  Rpc.make(FORK_WS_METHODS.hubGetStatus, {
+    payload: ForkHubStatusInput,
+    success: ForkHubStatus,
+    error: HubRpcError,
+  }),
+  Rpc.make(FORK_WS_METHODS.hubStartLogin, {
+    payload: ForkHubStartLoginInput,
+    success: ForkHubLogin,
+    error: HubRpcError,
+  }),
+  Rpc.make(FORK_WS_METHODS.hubFinishLogin, {
+    payload: ForkHubFinishLoginInput,
+    success: Schema.Struct({}),
+    error: HubRpcError,
+  }),
 );
 
 /** Mutations, so clients can gate controls on the same scope the server enforces. */
@@ -62,9 +93,12 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.secretsUpdateItem]: AuthSettingsWriteScope,
   [FORK_WS_METHODS.secretsInstallCli]: AuthSettingsWriteScope,
   [FORK_WS_METHODS.secretsInstallSandbox]: AuthSettingsWriteScope,
+  [FORK_WS_METHODS.hubStartLogin]: AuthProvidersManageScope,
+  [FORK_WS_METHODS.hubFinishLogin]: AuthProvidersManageScope,
 } as const;
 
 /** Reads, kept out of the client-guarded map because query atoms refuse guarded tags. */
 export const FORK_RPC_REQUIRED_SCOPES = {
   [FORK_WS_METHODS.secretsGetState]: AuthSettingsWriteScope,
+  [FORK_WS_METHODS.hubGetStatus]: AuthProvidersManageScope,
 } as const;

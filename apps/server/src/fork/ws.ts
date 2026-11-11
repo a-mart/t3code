@@ -1,5 +1,8 @@
 import {
   FORK_WS_METHODS,
+  type ForkHubFinishLoginInput,
+  type ForkHubStartLoginInput,
+  type ForkHubStatusInput,
   type ForkSecretsConfigureInput,
   type ForkSecretsError,
   type ForkSecretsSetCollectionsInput,
@@ -8,7 +11,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { FetchHttpClient, HttpClient } from "effect/http";
 
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
+import * as HubApi from "./hub/hubApi.ts";
 import * as SecretsService from "./secrets/SecretsService.ts";
 
 /** Fork WebSocket handlers, spread into the handler object in `ws.ts`. */
@@ -16,6 +22,13 @@ export const handlers = Effect.gen(function* () {
   // Optional, so upstream harnesses that build the WebSocket layer need no fork
   // services. `server.ts` always provides it.
   const service = yield* Effect.serviceOption(SecretsService.SecretsService);
+  const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources.UsageLimitSources);
+  const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
+  const hub = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Option.match(httpClient, {
+      onNone: () => effect.pipe(Effect.provide(FetchHttpClient.layer)),
+      onSome: (client) => effect.pipe(Effect.provideService(HttpClient.HttpClient, client)),
+    });
   const secrets = <A>(
     run: (secrets: SecretsService.SecretsService["Service"]) => Effect.Effect<A, ForkSecretsError>,
   ) =>
@@ -38,5 +51,19 @@ export const handlers = Effect.gen(function* () {
       secrets((s) => s.updateItem(input)),
     [FORK_WS_METHODS.secretsInstallCli]: () => secrets((s) => s.installCli),
     [FORK_WS_METHODS.secretsInstallSandbox]: () => secrets((s) => s.installSandbox),
+    [FORK_WS_METHODS.hubGetStatus]: (input: ForkHubStatusInput) =>
+      hub(HubApi.getStatus(input.sourceId)),
+    [FORK_WS_METHODS.hubStartLogin]: (input: ForkHubStartLoginInput) =>
+      hub(HubApi.startLogin(input)),
+    // A fresh login brings the account's limits back, so refresh them instead of waiting for the poll.
+    [FORK_WS_METHODS.hubFinishLogin]: (input: ForkHubFinishLoginInput) =>
+      hub(HubApi.finishLogin(input)).pipe(
+        Effect.tap(() =>
+          Option.match(usageLimitSources, {
+            onNone: () => Effect.void,
+            onSome: (sources) => Effect.forkDetach(sources.refresh),
+          }),
+        ),
+      ),
   };
 });
