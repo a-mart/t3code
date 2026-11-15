@@ -8,7 +8,8 @@ import type { T3McpToolDefinition } from "../t3McpToolPresentation.ts";
 export type ForkT3McpToolSummaryAction =
   | "fork-secure-command"
   | "fork-secrets-list"
-  | "fork-secret-save";
+  | "fork-secret-save"
+  | "fork-skill-save";
 
 export const FORK_T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   secure_bash: {
@@ -29,6 +30,12 @@ export const FORK_T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = 
     icon: "t3-code",
     summaryAction: "fork-secret-save",
   },
+  save_global_skill: {
+    displayName: "Save a global skill",
+    labels: ["Save", "Saving", "Saved", "a global skill"],
+    icon: "t3-code",
+    summaryAction: "fork-skill-save",
+  },
 };
 
 export const isForkT3McpToolSummaryAction = (
@@ -36,4 +43,5 @@ export const isForkT3McpToolSummaryAction = (
 ): action is ForkT3McpToolSummaryAction =>
   action === "fork-secure-command" ||
   action === "fork-secrets-list" ||
-  action === "fork-secret-save";
+  action === "fork-secret-save" ||
+  action === "fork-skill-save";

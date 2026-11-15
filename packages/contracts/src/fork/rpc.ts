@@ -23,6 +23,14 @@ import {
   ForkSecretsUnlockInput,
   ForkSecretsUpdateItemInput,
 } from "./secrets.ts";
+import {
+  ForkSkillsConfigureInput,
+  ForkSkillsDeleteInput,
+  ForkSkillsError,
+  ForkSkillsReadInput,
+  ForkSkillsReadResult,
+  ForkSkillsState,
+} from "./skills.ts";
 
 /** Fork-only WebSocket methods. Upstream clients never call them. */
 export const FORK_WS_METHODS = {
@@ -39,6 +47,11 @@ export const FORK_WS_METHODS = {
   hubGetStatus: "forkHub.getStatus",
   hubStartLogin: "forkHub.startLogin",
   hubFinishLogin: "forkHub.finishLogin",
+  skillsGetState: "forkSkills.getState",
+  skillsConfigure: "forkSkills.configure",
+  skillsSync: "forkSkills.sync",
+  skillsRead: "forkSkills.read",
+  skillsDelete: "forkSkills.deleteGlobal",
 } as const;
 
 const secretsRpc = <const Tag extends string, Payload extends Schema.Top>(
@@ -53,6 +66,11 @@ const secretsRpc = <const Tag extends string, Payload extends Schema.Top>(
 
 const EmptyInput = Schema.Struct({});
 const HubRpcError = Schema.Union([ForkHubError, EnvironmentAuthorizationError]);
+const SkillsRpcError = Schema.Union([ForkSkillsError, EnvironmentAuthorizationError]);
+const skillsRpc = <const Tag extends string, Payload extends Schema.Top>(
+  tag: Tag,
+  payload: Payload,
+) => Rpc.make(tag, { payload, success: ForkSkillsState, error: SkillsRpcError });
 
 export const ForkWsRpcGroup = RpcGroup.make(
   secretsRpc(FORK_WS_METHODS.secretsGetState, EmptyInput),
@@ -80,6 +98,15 @@ export const ForkWsRpcGroup = RpcGroup.make(
     success: Schema.Struct({}),
     error: HubRpcError,
   }),
+  skillsRpc(FORK_WS_METHODS.skillsGetState, EmptyInput),
+  skillsRpc(FORK_WS_METHODS.skillsConfigure, ForkSkillsConfigureInput),
+  skillsRpc(FORK_WS_METHODS.skillsSync, EmptyInput),
+  skillsRpc(FORK_WS_METHODS.skillsDelete, ForkSkillsDeleteInput),
+  Rpc.make(FORK_WS_METHODS.skillsRead, {
+    payload: ForkSkillsReadInput,
+    success: ForkSkillsReadResult,
+    error: SkillsRpcError,
+  }),
 );
 
 /** Mutations, so clients can gate controls on the same scope the server enforces. */
@@ -95,10 +122,15 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.secretsInstallSandbox]: AuthSettingsWriteScope,
   [FORK_WS_METHODS.hubStartLogin]: AuthProvidersManageScope,
   [FORK_WS_METHODS.hubFinishLogin]: AuthProvidersManageScope,
+  [FORK_WS_METHODS.skillsConfigure]: AuthSettingsWriteScope,
+  [FORK_WS_METHODS.skillsSync]: AuthSettingsWriteScope,
+  [FORK_WS_METHODS.skillsDelete]: AuthSettingsWriteScope,
 } as const;
 
 /** Reads, kept out of the client-guarded map because query atoms refuse guarded tags. */
 export const FORK_RPC_REQUIRED_SCOPES = {
   [FORK_WS_METHODS.secretsGetState]: AuthSettingsWriteScope,
   [FORK_WS_METHODS.hubGetStatus]: AuthProvidersManageScope,
+  [FORK_WS_METHODS.skillsGetState]: AuthSettingsWriteScope,
+  [FORK_WS_METHODS.skillsRead]: AuthSettingsWriteScope,
 } as const;

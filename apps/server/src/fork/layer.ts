@@ -5,6 +5,7 @@ import * as DockerRunner from "./secrets/DockerRunner.ts";
 import * as Nono from "./secrets/Nono.ts";
 import * as SecretsService from "./secrets/SecretsService.ts";
 import * as SecureExec from "./secrets/SecureExec.ts";
+import * as SkillsService from "./skills/SkillsService.ts";
 
 /**
  * Fork services. `server.ts` provides this once with the runtime services, not
@@ -17,3 +18,9 @@ export const layer = SecretsService.layer.pipe(
     Layer.mergeAll(BitwardenCli.layer, DockerRunner.layer, Nono.layer, SecureExec.layer),
   ),
 );
+
+/**
+ * Fork services that need the provider registry and settings, which sit above
+ * `layer` in `server.ts`. Provided with the runtime core services instead.
+ */
+export const runtimeLayer = SkillsService.layer;

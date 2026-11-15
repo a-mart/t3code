@@ -712,6 +712,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderInstallation.layer,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  ForkServer.runtimeLayer, // fork: skills sync refreshes providers after linking
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),

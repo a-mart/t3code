@@ -8,6 +8,10 @@ import {
   type ForkSecretsSetCollectionsInput,
   type ForkSecretsUnlockInput,
   type ForkSecretsUpdateItemInput,
+  type ForkSkillsConfigureInput,
+  type ForkSkillsDeleteInput,
+  type ForkSkillsError,
+  type ForkSkillsReadInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -16,12 +20,14 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as HubApi from "./hub/hubApi.ts";
 import * as SecretsService from "./secrets/SecretsService.ts";
+import * as SkillsService from "./skills/SkillsService.ts";
 
 /** Fork WebSocket handlers, spread into the handler object in `ws.ts`. */
 export const handlers = Effect.gen(function* () {
   // Optional, so upstream harnesses that build the WebSocket layer need no fork
   // services. `server.ts` always provides it.
   const service = yield* Effect.serviceOption(SecretsService.SecretsService);
+  const skillsService = yield* Effect.serviceOption(SkillsService.SkillsService);
   const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources.UsageLimitSources);
   const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
   const hub = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -36,7 +42,21 @@ export const handlers = Effect.gen(function* () {
       onNone: () => Effect.die(new Error("The secrets service isn't running on this server.")),
       onSome: run,
     });
+  const skills = <A>(
+    run: (skills: SkillsService.SkillsService["Service"]) => Effect.Effect<A, ForkSkillsError>,
+  ) =>
+    Option.match(skillsService, {
+      onNone: () => Effect.die(new Error("The skills service isn't running on this server.")),
+      onSome: run,
+    });
   return {
+    [FORK_WS_METHODS.skillsGetState]: () => skills((s) => s.getState),
+    [FORK_WS_METHODS.skillsConfigure]: (input: ForkSkillsConfigureInput) =>
+      skills((s) => s.configure(input)),
+    [FORK_WS_METHODS.skillsSync]: () => skills((s) => s.sync),
+    [FORK_WS_METHODS.skillsRead]: (input: ForkSkillsReadInput) => skills((s) => s.read(input.path)),
+    [FORK_WS_METHODS.skillsDelete]: (input: ForkSkillsDeleteInput) =>
+      skills((s) => s.deleteGlobal(input.name)),
     [FORK_WS_METHODS.secretsGetState]: () => secrets((s) => s.getState),
     [FORK_WS_METHODS.secretsConfigure]: (input: ForkSecretsConfigureInput) =>
       secrets((s) => s.configure(input)),

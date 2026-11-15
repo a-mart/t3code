@@ -18,5 +18,9 @@ export function forkT3ToolSummaryLabel(
       const secrets = `${selectedCount} ${selectedCount === 1 ? "secret" : "secrets"}`;
       return tried ? `Tried to save ${secrets}` : `Saved ${secrets}`;
     }
+    case "fork-skill-save": {
+      const skills = `${selectedCount} global ${selectedCount === 1 ? "skill" : "skills"}`;
+      return tried ? `Tried to save ${skills}` : `Saved ${skills}`;
+    }
   }
 }
