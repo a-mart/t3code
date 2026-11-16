@@ -5,7 +5,7 @@ import {
   SecretRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../../mcp/McpInvocationContext.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -47,7 +47,8 @@ const ListSecretsTool = Tool.make("list_secrets", {
   .annotate(Tool.Title, "List secrets")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const SecureBashTool = Tool.make("secure_bash", {
   description: [
@@ -90,7 +91,8 @@ const SecureBashTool = Tool.make("secure_bash", {
 })
   .annotate(Tool.Title, "Run a command with secrets")
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const SaveSecretTool = Tool.make("save_secret", {
   description: [
@@ -136,6 +138,7 @@ const SaveSecretTool = Tool.make("save_secret", {
   .annotate(Tool.Title, "Save a secret")
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const SecretsToolkit = Toolkit.make(ListSecretsTool, SecureBashTool, SaveSecretTool);
