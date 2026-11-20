@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/no-untranslated-copy -- fork settings ship in English only */
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthSettingsWriteScope,
@@ -29,7 +30,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../../components/settings/settingsLayout";
-import { searchableSetting } from "../../components/settings/settingsSearch";
+import { useSearchableSetting } from "../../components/settings/settingsSearch";
 import { useSettingsScope } from "../../components/settings/SettingsScopeContext";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
@@ -285,6 +286,7 @@ interface RepositorySectionProps {
 }
 
 function RepositorySection(props: RepositorySectionProps) {
+  const searchableSetting = useSearchableSetting();
   const { state } = props;
   const nowMinute = useNowMinute();
   const [actionError, setActionError] = useState<string | null>(null);
@@ -532,6 +534,7 @@ function GlobalSkillsSection({
   readonly onView: (target: ViewTarget) => void;
   readonly onDelete: (name: string) => Promise<Outcome>;
 }) {
+  const searchableSetting = useSearchableSetting();
   const [errors, setErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const remove = async (name: string) => {
     const outcome = await onDelete(name);
@@ -598,6 +601,7 @@ function GlobalSkillsSection({
 }
 
 function InstructionsSection({ state }: { readonly state: ForkSkillsState }) {
+  const searchableSetting = useSearchableSetting();
   const { instructions } = state;
   const [open, setOpen] = useState(false);
   return (
@@ -664,6 +668,7 @@ function OtherSkillsSection({
   readonly groups: ReadonlyArray<OtherSkillGroup>;
   readonly onView: (target: ViewTarget) => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const [showBundled, setShowBundled] = useState(false);
   const bundledCount = groups.filter((group) => group.bundled).length;
   const shown = showBundled ? groups : groups.filter((group) => !group.bundled);

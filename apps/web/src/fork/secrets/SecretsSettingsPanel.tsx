@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/no-untranslated-copy -- fork settings ship in English only */
 import {
   AuthSettingsWriteScope,
   type EnvironmentId,
@@ -39,7 +40,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../../components/settings/settingsLayout";
-import { searchableSetting } from "../../components/settings/settingsSearch";
+import { useSearchableSetting } from "../../components/settings/settingsSearch";
 import { useSettingsScope } from "../../components/settings/SettingsScopeContext";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
@@ -366,6 +367,7 @@ interface BitwardenSectionProps {
 }
 
 function BitwardenSection(props: BitwardenSectionProps) {
+  const searchableSetting = useSearchableSetting();
   const { state } = props;
   const nowMinute = useNowMinute();
   const connected = state.status === "ready" || state.status === "locked";
@@ -684,11 +686,12 @@ function UnlockForm(props: BitwardenSectionProps) {
 }
 
 function KeepUnlockedRow(props: BitwardenSectionProps) {
+  const searchableSetting = useSearchableSetting();
   const [error, setError] = useState<string | null>(null);
   return (
     <SettingsRow
       {...searchableSetting("fork-secrets-keep-unlocked")}
-      description="Restores the unlock after this server restarts, so scheduled tasks keep working. The session key then sits in T3's data folder, where any process running as this user can read it; use a dedicated account."
+      description="Restores the unlock after this server restarts, so scheduled tasks keep working. The session key then sits in T3's data folder, readable by any process running as this user; use a dedicated account."
       status={error ? <span className="text-destructive">{error}</span> : null}
       control={
         <Switch
@@ -769,6 +772,7 @@ function CollectionsSection({
   readonly busy: string | null;
   readonly onSave: (collectionIds: ReadonlyArray<string>) => Promise<Outcome>;
 }) {
+  const searchableSetting = useSearchableSetting();
   const savedIds = state.selectedCollections.map((collection) => collection.id);
   const [draft, setDraft] = useState<ReadonlyArray<string> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -871,6 +875,7 @@ function SecretsSection({
   readonly projects: ReadonlyArray<ProjectOption>;
   readonly onUpdate: GrantUpdate;
 }) {
+  const searchableSetting = useSearchableSetting();
   const [filter, setFilter] = useState("");
   // Collapsed until opened: a vault can sync hundreds of items.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -1343,6 +1348,7 @@ function AgentsSection({
   readonly onInstallSandbox: () => Promise<Outcome>;
   readonly onRefresh: () => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const [error, setError] = useState<string | null>(null);
   const destination = state.selectedCollections.find(
     (collection) => collection.id === state.saveCollectionId,
@@ -1351,7 +1357,7 @@ function AgentsSection({
     <SettingsSection title="How agents use secrets">
       <SettingsRow
         title="secure_bash and list_secrets"
-        description="Agents in a granted project see each secret's alias, never its value. They run commands that need one with secure_bash, which puts the value in an environment variable named after the alias and filters it out of the output. Secret-backed commands need the thread in full-access mode, not plan or approval mode."
+        description="Agents in a granted project see aliases, never values. secure_bash puts each value in an environment variable named after its alias and filters it from output. Needs full-access mode."
       >
         <div className="grid gap-2 pb-3">
           <CopyableCommand
@@ -1425,6 +1431,7 @@ function DockerRow({
   readonly onInstall: () => Promise<Outcome>;
   readonly onRefresh: () => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const [error, setError] = useState<string | null>(null);
   const installing = busy === "install-sandbox";
   const install = () =>
@@ -1443,10 +1450,9 @@ function DockerRow({
       {...searchableSetting("fork-secrets-docker")}
       description={
         <>
-          On Windows, every secret-backed command runs in a Linux container with only the project
-          mounted, a clean environment, and none of this host's logins or SSH keys. Each thread
-          keeps its own container, shared with its subagents, until Bitwarden locks, a secret it
-          received is revoked, or it sits idle for an hour. Nothing runs outside Docker.
+          On Windows, secret-backed commands run only in a Linux container holding just the project,
+          with no host logins or SSH keys. A thread's container ends on lock, revocation, or an hour
+          idle.
           <span className="mt-1 block">{detail}</span>
         </>
       }
@@ -1477,6 +1483,7 @@ function SandboxRow({
   readonly onConfigure: BitwardenSectionProps["onConfigure"];
   readonly onInstallSandbox: () => Promise<Outcome>;
 }) {
+  const searchableSetting = useSearchableSetting();
   const [error, setError] = useState<string | null>(null);
   const { sandbox } = state;
   const outdated =
@@ -1509,10 +1516,8 @@ function SandboxRow({
       {...searchableSetting("fork-secrets-sandbox")}
       description={
         <>
-          Secret-backed commands run inside nono with a clean environment and an empty home folder.
-          They can write only to the project and temporary folders, and can't use this host's own
-          logins or SSH keys; ~/.ssh/known_hosts and ~/.ssh/config stay readable. While this is on,
-          nothing runs without nono.
+          Secret-backed commands run only in nono: clean environment, empty home, writes only to the
+          project and temp folders, no host logins or SSH keys (~/.ssh config stays readable).
           <span className="mt-1 block">{installing ? "Installing nono…" : location}</span>
         </>
       }
