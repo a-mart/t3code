@@ -1,4 +1,4 @@
-/** Fork sections, spread into `T3_CODE_ORCHESTRATION_SECTIONS` for sessions with T3's tools. */
+/** Fork sections, spread into `t3CodeOrchestrationSections` for sessions with T3's tools. */
 export const FORK_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `### Secrets
 
